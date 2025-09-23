@@ -70,7 +70,8 @@ jupyter notebook
 
 4. Open and run all code blocks from top to bottom for either:
    - `DeepONet_simulation.ipynb` for standard DeepONet architecture  
-   - `MS_DeepONet_simulation.ipynb` for the MS-DeepONet architecture  
+   - `MS_DeepONet_simulation.ipynb` for the MS-DeepONet architecture
+   - `LSTM_simulation.ipynb` for the LSTM architecture  
 
 ---
 
