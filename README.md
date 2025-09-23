@@ -12,8 +12,8 @@ We demonstrate the use of Deep Operator Networks (DeepONets) and Multi-Step Deep
 Each example system is contained in its own folder:
 
 - `Van_der_Pol` 
-- `Four_tank` (to appear soon)
-- `Pendulum_on_cart` (to appear soon)
+- `Four_tank` 
+- `Pendulum_on_cart` 
 
 Each folder includes:
 
