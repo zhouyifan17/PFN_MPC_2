@@ -79,9 +79,9 @@ jupyter notebook
 Each notebook will:
 
 - Generate training and validation data 
-- Train the respective DeepONet architecture  
+- Train the respective DeepONet/LSTM architecture  
 - Run closed-loop MPC simulations 
-- Save results to the corresponding `data_standard/` or `data_MS/` folder  
+- Save results to the corresponding `data_standard/`, `data_MS/` or `data_LSTM/` folder  
 - Visualize simulation and training results  
 
 ---
