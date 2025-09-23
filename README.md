@@ -3,7 +3,7 @@
 This repository contains supplementary code for the paper:  
 **Deep Operator Neural Network Model Predictive Control**.
 
-We demonstrate the use of Deep Operator Networks (DeepONets) and Multi-Step Deep Operator Networks (MS-DeepONets) in the context of Model Predictive Control (MPC) across three nonlinear dynamical systems.
+We demonstrate the use of Deep Operator Networks (DeepONets), Multi-Step Deep Operator Networks (MS-DeepONets) and LSTM networks in the context of Model Predictive Control (MPC) across three nonlinear dynamical systems.
 
 ---
 
