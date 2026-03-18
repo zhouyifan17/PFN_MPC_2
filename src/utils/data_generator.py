@@ -6,7 +6,7 @@ from src.utils.signals import multisine
 
 def generate_excitation_signal(T_period=2410, pmin=1, pmax=500, filter_coeff=0.1, seed=42):
     """
-    生成通用的激励信号 (多正弦 + 正弦 + 低通滤波)。
+    生成通用的激励信号 (多正弦 + 正弦)
     返回:
         u_data: 原始激励信号 (通常用于神经网络输入，模拟包含了执行器动态的黑盒)
         u_filtered: 滤波后的信号 (通常用于实际物理系统的 ODE 仿真)
@@ -16,12 +16,8 @@ def generate_excitation_signal(T_period=2410, pmin=1, pmax=500, filter_coeff=0.1
     x_wave = np.linspace(-np.pi, np.pi, T_period)
     u_data = u_multisine + np.sin(x_wave)
 
-    u_filtered = np.zeros(len(u_data))
-    for i in range(0, len(u_data)-1):
-        u_filtered[i+1] = (1 - filter_coeff) * u_filtered[i] + filter_coeff * u_data[i]
-
-    # 统一转换为二维数组 (N, 1)，方便后续支持多输入系统的矩阵运算
-    return u_data.reshape(-1, 1), u_filtered.reshape(-1, 1)
+    # 直接返回原始信号的二维数组形式 (N, 1)
+    return u_data.reshape(-1, 1)
 
 
 def simulate_system(ode_func, u_sequence, y0, Ts):

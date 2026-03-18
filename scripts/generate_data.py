@@ -1,9 +1,14 @@
 import os
 import numpy as np
+import sys
+
+sys.path.append(os.path.abspath("."))
 from src.dynamics import van_der_pol
 from src.utils.data_generator import (
     generate_excitation_signal, simulate_system, build_dataset, plot_and_save_data
 )
+
+# TODO: 现在还只能生成VdP的数据
 
 def main():
     # 统一存放到 data 目录下
@@ -13,12 +18,12 @@ def main():
     print("Generating Van der Pol data...")
     
     # 1. 生成信号
-    u_data, u_filtered = generate_excitation_signal(T_period=2410)
+    u_data = generate_excitation_signal(T_period=2410)
     
     # 2. 包装动力学方程并仿真
     mu = 1.0
     vdp_ode = lambda t, y, u_i: van_der_pol(t, y, mu, u_i[0])
-    t_vec, x_states = simulate_system(vdp_ode, u_filtered, y0=[2, 0], Ts=0.1)
+    t_vec, x_states = simulate_system(vdp_ode, u_data, y0=[2, 0], Ts=0.1)
     
     # 3. 构建数据集
     X_train, Y_train, X_val, Y_val = build_dataset(u_data, x_states, N_train=2000)
