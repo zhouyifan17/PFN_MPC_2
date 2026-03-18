@@ -47,7 +47,7 @@ def main():
     results_dir = f"results/{dataset_name}/TabPFN_eval"
     os.makedirs(results_dir, exist_ok=True)
     
-    seq_len = 20  # 滑动窗口长度
+    seq_len = 1  # 滑动窗口长度
 
     # 2. 加载单步原始数据
     print("Loading raw data...")
