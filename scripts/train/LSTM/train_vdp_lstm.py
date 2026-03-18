@@ -52,10 +52,18 @@ def main():
         # 实例化训练器
         trainer = Trainer(model, device, ckpt_dir, model_name=f"model_LSTM_idx_{idx_i}.pth")
 
+        exp_info = {
+            "Dataset": "van_der_pol",
+            "Model": "LSTM",
+            "Hidden_Size": n_hidden,
+            "Epochs": N_epoch
+        }
+        
         # 启动训练
         train_loss, val_loss, t_elapsed = trainer.train(
             X_train_t, Y_train_t, X_val_t, Y_val_t, 
-            optimizer, scheduler, num_epochs=N_epoch, log_interval=2000
+            optimizer, scheduler, num_epochs=N_epoch, log_interval=2000,
+            experiment_info=exp_info
         )
 
         # 记录结果并保存 loss numpy 文件

@@ -1,6 +1,7 @@
 import os
 import time
 import torch
+import datetime
 
 class Trainer:
     def __init__(self, model, device, save_dir, model_name="best_model.pth"):
@@ -10,7 +11,7 @@ class Trainer:
         self.model_name = model_name
         os.makedirs(self.save_dir, exist_ok=True)
 
-    def train(self, X_train, Y_train, X_val, Y_val, optimizer, scheduler, num_epochs, log_interval=1000):
+    def train(self, X_train, Y_train, X_val, Y_val, optimizer, scheduler, num_epochs, log_interval=1000, experiment_info=None):
         train_loss_hist = []
         val_loss_hist = []
         best_val_loss = float('inf')
@@ -58,4 +59,14 @@ class Trainer:
         t_elapsed = time.time() - t0
         print(f"Training completed in {t_elapsed:.2f}s. Best Val Loss: {best_val_loss:.6f} at Epoch {best_epoch}")
 
+        if experiment_info is not None:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(current_dir))
+            log_file_path = os.path.join(project_root, "forecast_results.txt")
+            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            info_str = " | ".join([f"{k}: {v}" for k, v in experiment_info.items()])
+            log_message = f"[{current_time}] {info_str} | Val_MSE: {best_val_loss:.6f} | Train_Time: {t_elapsed:.1f}s\n"
+            with open(log_file_path, "a", encoding="utf-8") as f:
+                f.write(log_message)
+                
         return train_loss_hist, val_loss_hist, t_elapsed

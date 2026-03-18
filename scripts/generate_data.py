@@ -8,7 +8,7 @@ from src.utils.data_generator import (
     generate_excitation_signal, simulate_system, build_dataset, plot_and_save_data
 )
 
-# TODO: 现在还只能生成VdP的数据
+# TODO: 现在还只能生成VdP的数据，后续可以补充其他数据
 
 def main():
     # 统一存放到 data 目录下
