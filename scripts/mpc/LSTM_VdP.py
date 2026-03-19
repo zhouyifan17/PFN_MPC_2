@@ -22,7 +22,8 @@ def main():
     mu = 1.0     
     nx, ny, nu = 2, 1, 1 
 
-    ckpt_path = f"checkpoints/LSTM/van_der_pol/model_LSTM_idx_{idx_opt}.pth"
+    ckpt_path = f"checkpoints/LSTM/van_der_pol/standard/model_LSTM_idx_{idx_opt}.pth"
+    # ckpt_path = f"checkpoints/LSTM/van_der_pol/distill/model_LSTM_idx_{idx_opt}.pth"
     results_dir = "results/van_der_pol/LSTM/mpc"
     os.makedirs(results_dir, exist_ok=True)
 
@@ -39,7 +40,9 @@ def main():
     
     print("Initializing LSTM-MPC Solver...")
     mpc = LSTM_MPCSolver(nx, ny, nu, N, Q, R, n_hidden, weights, output_indices=[0])
-
+    mpc.opti.subject_to(mpc.u >= -10.0)
+    mpc.opti.subject_to(mpc.u <= 10.0)
+    
     # 4. 生成参考轨迹
     ref_seq = np.concatenate((
         np.tile([0.8], (40, 1)), np.tile([2.5], (40, 1)), 

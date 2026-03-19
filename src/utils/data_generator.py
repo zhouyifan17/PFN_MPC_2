@@ -4,17 +4,19 @@ import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from src.utils.signals import multisine
 
-def generate_excitation_signal(T_period=2410, pmin=1, pmax=500, filter_coeff=0.1, seed=42):
+def generate_excitation_signal(T_period=2410, pmin=1, pmax=500, seed=42, amplitude=2.0):
     """
     生成通用的激励信号 (多正弦 + 正弦)
+    输入:
+        amplitude: 用于控制激励信号的整体能量幅值
     返回:
         u_data: 原始激励信号 (通常用于神经网络输入，模拟包含了执行器动态的黑盒)
         u_filtered: 滤波后的信号 (通常用于实际物理系统的 ODE 仿真)
     """
-    u_multisine = 2 * multisine(N_points_per_period=T_period, N_periods=1, 
+    u_multisine = amplitude * multisine(N_points_per_period=T_period, N_periods=1, 
                                 pmin=pmin, pmax=pmax, n_crest_factor_optim=100, seed=seed)
     x_wave = np.linspace(-np.pi, np.pi, T_period)
-    u_data = u_multisine + np.sin(x_wave)
+    u_data = u_multisine + (amplitude * 0.5) * np.sin(x_wave)
 
     # 直接返回原始信号的二维数组形式 (N, 1)
     return u_data.reshape(-1, 1)

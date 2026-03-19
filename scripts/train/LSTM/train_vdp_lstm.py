@@ -12,15 +12,18 @@ from src.engine.trainer import Trainer
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train LSTM with or without Distillation")
-    parser.add_argument("--mode", type=str, default="standard", choices=["standard", "distill"], help="Training mode: 'standard' or 'distill'")
-    parser.add_argument("--seq_len", type=int, default=1, help="Sequence length used for teacher labels (to align data)")
+    parser.add_argument("--mode", type=str, default="standard", choices=["standard", "distill"])
+    parser.add_argument("--seq_len", type=int, default=1, help="Sequence length used for teacher labels")
     parser.add_argument("--distill_weight", type=float, default=0.5, help="Weight of the distillation loss")
+    parser.add_argument("--n_train", type=int, default=50, help="Number of trajectories to use for training (1 to 50)")
+    parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
 def main():
     args = parse_args()
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     
-    # 1. 路径配置
     data_dir = "data/processed/van_der_pol"
     mode_str = "distill" if args.mode == "distill" else "standard"
     ckpt_dir = f"checkpoints/LSTM/van_der_pol/{mode_str}"
@@ -31,58 +34,69 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    # 加载基础数据
-    X_train = np.load(os.path.join(data_dir, "X_train.npy"))
-    Y_train = np.load(os.path.join(data_dir, "Y_train.npy"))
-    X_val = np.load(os.path.join(data_dir, "X_val.npy"))
-    Y_val = np.load(os.path.join(data_dir, "Y_val.npy"))
-    X_train_t = torch.tensor(X_train, dtype=torch.float32).unsqueeze(0).to(device)
-    Y_train_t = torch.tensor(Y_train, dtype=torch.float32).unsqueeze(0).to(device)
-    X_val_t = torch.tensor(X_val, dtype=torch.float32).unsqueeze(0).to(device)
-    Y_val_t = torch.tensor(Y_val, dtype=torch.float32).unsqueeze(0).to(device)
+    # 1. 加载 3D 基础数据 [N_episodes, T_steps, Features]
+    X_train_3d = np.load(os.path.join(data_dir, "X_train.npy"))
+    Y_train_3d = np.load(os.path.join(data_dir, "Y_train.npy"))
+    X_val_3d = np.load(os.path.join(data_dir, "X_val.npy"))
+    Y_val_3d = np.load(os.path.join(data_dir, "Y_val.npy"))
     
-    # 如果是蒸馏模式，加载老师标签并对齐数据
+    # 2. 轨迹数量切分 (--n_train 控制)
+    n_train = min(args.n_train, X_train_3d.shape[0])
+    # 提取前 n_train 条轨迹
+    X_train = X_train_3d[:n_train]
+    Y_train = Y_train_3d[:n_train]
+    
+    # 验证集始终使用全部 50 条轨迹
+    X_val = X_val_3d
+    Y_val = Y_val_3d
+    print(f"Using {n_train} trajectories for training, {len(X_val)} for validation.")
+
+    # 3. 如果是蒸馏模式，加载老师标签
     t_pred, t_quant, t_pred_t, t_quant_t = None, None, None, None
     if args.mode == "distill":
         distill_dir = os.path.join(data_dir, "distill")
-        t_pred = np.load(os.path.join(distill_dir, f"teacher_preds_seq{args.seq_len}.npy"))
-        t_quant = np.load(os.path.join(distill_dir, f"teacher_quantiles_seq{args.seq_len}.npy"))
-        t_pred_t = torch.tensor(t_pred, dtype=torch.float32).unsqueeze(0).to(device)
-        t_quant_t = torch.tensor(t_quant, dtype=torch.float32).unsqueeze(0).to(device)
-        # 数据对齐裁剪
-        crop_len = len(X_train) - len(t_pred)
-        X_train = X_train[crop_len:]
-        Y_train = Y_train[crop_len:]
-        print(f"Data aligned. Cropped first {crop_len} steps from train set.")
+        t_pred_full = np.load(os.path.join(distill_dir, f"teacher_preds_seq{args.seq_len}.npy"))
+        t_quant_full = np.load(os.path.join(distill_dir, f"teacher_quantiles_seq{args.seq_len}.npy"))
+        
+        t_pred = t_pred_full[:n_train]
+        t_quant = t_quant_full[:n_train]
 
+        t_pred_t = torch.tensor(t_pred, dtype=torch.float32).contiguous().to(device)
+        t_quant_t = torch.tensor(t_quant, dtype=torch.float32).contiguous().to(device)
+
+    # 转换为 PyTorch Tensor
+    X_train_t = torch.tensor(X_train, dtype=torch.float32).contiguous().to(device)
+    Y_train_t = torch.tensor(Y_train, dtype=torch.float32).contiguous().to(device)
+    X_val_t = torch.tensor(X_val, dtype=torch.float32).contiguous().to(device)
+    Y_val_t = torch.tensor(Y_val, dtype=torch.float32).contiguous().to(device)
+
+    # 特征维度在最后一位 (dim=2)
     input_size = X_train_t.shape[2]
     output_size = Y_train_t.shape[2]
 
-    # 3. 实验配置
-    combinations = [20] # Hidden dimensions to test
+    # 循环训练
+    combinations = [20] 
     N_epoch = 40000
     ablation_results = []
 
-    # 4. 循环训练
     for idx_i, n_hidden in enumerate(combinations, start=1):
         print(f"\n--- Training LSTM (Hidden: {n_hidden}) ---")
         
-        # 初始化模型与优化器
         model = LSTMModel(input_size, n_hidden, output_size)
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10000, gamma=0.1)
 
-        # 实例化训练器
         trainer = Trainer(model, device, ckpt_dir, model_name=f"model_LSTM_idx_{idx_i}.pth")
 
         exp_info = {
             "Dataset": "van_der_pol",
             "Model": "LSTM",
+            "Mode": args.mode,
+            "N_Trajs": n_train,
             "Hidden_Size": n_hidden,
             "Epochs": N_epoch
         }
         
-        # 启动训练
         train_loss, val_loss, t_elapsed = trainer.train(
             X_train_t, Y_train_t, X_val_t, Y_val_t, 
             optimizer, scheduler, num_epochs=N_epoch, log_interval=2000,
@@ -90,7 +104,6 @@ def main():
             t_pred=t_pred_t, t_quant=t_quant_t, distill_weight=args.distill_weight
         )
 
-        # 记录结果并保存 loss numpy 文件
         np.save(os.path.join(results_dir, f"train_loss_idx_{idx_i}.npy"), train_loss)
         np.save(os.path.join(results_dir, f"val_loss_idx_{idx_i}.npy"), val_loss)
 
@@ -102,7 +115,6 @@ def main():
             'T_train': t_elapsed
         })
 
-    # 5. 保存 ablation 结果给 MATLAB 使用
     ablation_mat = {f'result_{i}': res for i, res in enumerate(ablation_results)}
     savemat(os.path.join(results_dir, "ablation_results.mat"), ablation_mat)
     print("All experiments finished and saved!")

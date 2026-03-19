@@ -11,20 +11,26 @@ from sklearn.model_selection import KFold
 sys.path.append(".")
 from src.models import TabPFNWrapper
 
-def create_sliding_windows(X, Y, seq_len):
+def create_sliding_windows_3d(X_3d, Y_3d, seq_len):
     """
-    通用滑动窗口生成器
+    针对 3D 多轨迹数据 [N_episodes, T_steps, Features] 的滑动窗口生成器。
+    严格保证在轨迹内部滑动，绝不跨越轨迹边界！
     """
     if seq_len == 1:
-        return X, Y
+        return X_3d.reshape(-1, X_3d.shape[-1]), Y_3d.reshape(-1, Y_3d.shape[-1])
     
-    X_seq, Y_target = [], []
-    for i in range(len(X) - seq_len + 1):
-        window_x = X[i : i + seq_len].flatten()
-        X_seq.append(window_x)
-        Y_target.append(Y[i + seq_len - 1])
-        
-    return np.array(X_seq), np.array(Y_target)
+    X_seq_list, Y_seq_list = [], []
+    N_episodes = X_3d.shape[0]
+    
+    for ep in range(N_episodes):
+        X_ep = X_3d[ep]
+        Y_ep = Y_3d[ep]
+        # 在单条轨迹内部切片，这会合规地丢掉该轨迹开头的 (seq_len - 1) 个点
+        for i in range(len(X_ep) - seq_len + 1):
+            X_seq_list.append(X_ep[i : i + seq_len].flatten())
+            Y_seq_list.append(Y_ep[i + seq_len - 1])
+            
+    return np.array(X_seq_list), np.array(Y_seq_list)
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -47,16 +53,15 @@ def main():
     save_dir = os.path.join(data_dir, "distill")
     os.makedirs(save_dir, exist_ok=True)
     
-    # 2. 加载原始训练数据
+    # 2. 加载 3D 原始训练数据
     print(f"Loading raw train data for {args.dataset}...")
-    X_train_raw = np.load(os.path.join(data_dir, "X_train.npy"))
-    Y_train_raw = np.load(os.path.join(data_dir, "Y_train.npy"))
+    X_train_raw = np.load(os.path.join(data_dir, "X_train.npy"))  # [50, 2000, 3]
+    Y_train_raw = np.load(os.path.join(data_dir, "Y_train.npy"))  # [50, 2000, 2]
     
-    # 3. 滑动窗口处理
-    print(f"Applying sliding window (seq_len={args.seq_len})...")
-    X_seq, Y_seq = create_sliding_windows(X_train_raw, Y_train_raw, args.seq_len)
+    # 3. 严格的 3D 滑动窗口处理
+    print(f"Applying 3D sliding window (seq_len={args.seq_len})...")
+    X_seq, Y_seq = create_sliding_windows_3d(X_train_raw, Y_train_raw, args.seq_len)
     print(f"Processed Sequence Shape: X={X_seq.shape}, Y={Y_seq.shape}")
-    # TODO: 这里有个小问题，那就是如果滑动窗口的长度 l 是大于1的，那么训练集最开始的 l-1 个数据点就会没有蒸馏标签，看看后面怎么解决
     
     # 4. 数据标准化 (保存 Scaler 供后续 Student 模型使用)
     print("Fitting Scaler...")
@@ -111,21 +116,29 @@ def main():
             point_preds_list.append(p_pred)
             quantile_preds_list.append(q_pred)
             
-        # 将预测结果填入对应的索引位置
+        # 将预测结果填入对应的全局索引位置
         Y_teacher_point[predict_idx] = np.concatenate(point_preds_list, axis=0)
         Y_teacher_quantiles[predict_idx] = np.concatenate(quantile_preds_list, axis=0)
         
-        # 保存结果
+    # 将 2D 扁平数组恢复成严格的 3D 轨迹结构
+    N_episodes = X_train_raw.shape[0]
+    T_valid_steps = X_train_raw.shape[1] - args.seq_len + 1
+    
+    Y_teacher_point_3d = Y_teacher_point.reshape(N_episodes, T_valid_steps, -1)
+    Y_teacher_quantiles_3d = Y_teacher_quantiles.reshape(N_episodes, T_valid_steps, out_dim, len(quantiles))
+    
+    # 保存路径
     p_path = os.path.join(save_dir, f"teacher_preds_seq{args.seq_len}.npy")
     q_path = os.path.join(save_dir, f"teacher_quantiles_seq{args.seq_len}.npy")
     q_val_path = os.path.join(save_dir, "quantile_values.npy")
     
-    np.save(p_path, Y_teacher_point)
-    np.save(q_path, Y_teacher_quantiles)
+    np.save(p_path, Y_teacher_point_3d)
+    np.save(q_path, Y_teacher_quantiles_3d)
     np.save(q_val_path, np.array(quantiles))
     
-    print(X_train_raw.shape)
-    print(Y_teacher_point.shape)
+    print(f"\nOriginal 3D Data Shape: {X_train_raw.shape}")
+    print(f"Teacher Labels Shape Saved: {Y_teacher_point_3d.shape}")
+    print(f"Teacher Quantiles Shape Saved: {Y_teacher_quantiles_3d.shape}")
     
     print(f"\nDistillation Labels Generated Successfully!")
     print(f"Point preds saved to: {p_path}")
