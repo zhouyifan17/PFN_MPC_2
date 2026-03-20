@@ -13,6 +13,7 @@ from src.engine.trainer import Trainer
 def parse_args():
     parser = argparse.ArgumentParser(description="Train LSTM with or without Distillation")
     parser.add_argument("--mode", type=str, default="standard", choices=["standard", "distill"])
+    parser.add_argument("--data_source", type=str, default="real", choices=["real", "surrogate", "point_cloud"], help="训练数据的来源")
     parser.add_argument("--seq_len", type=int, default=1, help="Sequence length used for teacher labels")
     parser.add_argument("--distill_weight", type=float, default=0.5, help="Weight of the distillation loss")
     parser.add_argument("--n_train", type=int, default=50, help="Number of trajectories to use for training (1 to 50)")
@@ -26,32 +27,43 @@ def main():
     
     data_dir = "data/processed/van_der_pol"
     mode_str = "distill" if args.mode == "distill" else "standard"
-    ckpt_dir = f"checkpoints/LSTM/van_der_pol/{mode_str}"
-    results_dir = f"results/van_der_pol/LSTM/{mode_str}"
+    save_prefix = f"{args.data_source}_{mode_str}"
+    ckpt_dir = f"checkpoints/LSTM/van_der_pol/{save_prefix}"
+    results_dir = f"results/van_der_pol/LSTM/{save_prefix}"
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(ckpt_dir, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    print(f"Using device: {device} | Data Source: {args.data_source.upper()} | Mode: {args.mode.upper()}")
     
-    # 1. 加载 3D 基础数据 [N_episodes, T_steps, Features]
-    X_train_3d = np.load(os.path.join(data_dir, "X_train.npy"))
-    Y_train_3d = np.load(os.path.join(data_dir, "Y_train.npy"))
+    # 加载 3D 训练数据
+    if args.data_source == "real":
+        X_train_3d = np.load(os.path.join(data_dir, "X_train.npy"))
+        Y_train_3d = np.load(os.path.join(data_dir, "Y_train.npy"))
+    elif args.data_source == "surrogate":
+        # 加载 TabPFN 离线推演出来的虚拟轨迹
+        syn_dir = os.path.join(data_dir, "synthetic")
+        X_train_3d = np.load(os.path.join(syn_dir, "X_train_surrogate.npy"))
+        Y_train_3d = np.load(os.path.join(syn_dir, "Y_train_surrogate.npy"))
+    elif args.data_source == "point_cloud":
+        syn_dir = os.path.join(data_dir, "synthetic")
+        X_train_3d = np.load(os.path.join(syn_dir, "X_train_point_cloud.npy"))
+        Y_train_3d = np.load(os.path.join(syn_dir, "Y_train_point_cloud.npy"))
+        
+    # 验证集使用真实物理数据
     X_val_3d = np.load(os.path.join(data_dir, "X_val.npy"))
     Y_val_3d = np.load(os.path.join(data_dir, "Y_val.npy"))
     
     # 2. 轨迹数量切分 (--n_train 控制)
     n_train = min(args.n_train, X_train_3d.shape[0])
-    # 提取前 n_train 条轨迹
     X_train = X_train_3d[:n_train]
     Y_train = Y_train_3d[:n_train]
     
-    # 验证集始终使用全部 50 条轨迹
     X_val = X_val_3d
     Y_val = Y_val_3d
-    print(f"Using {n_train} trajectories for training, {len(X_val)} for validation.")
+    print(f"Using {n_train} {args.data_source} trajectories for training, {len(X_val)} real trajectories for validation.")
 
-    # 3. 如果是蒸馏模式，加载老师标签
+    # 蒸馏模式，加载老师标签
     t_pred, t_quant, t_pred_t, t_quant_t = None, None, None, None
     if args.mode == "distill":
         distill_dir = os.path.join(data_dir, "distill")
@@ -70,10 +82,21 @@ def main():
     X_val_t = torch.tensor(X_val, dtype=torch.float32).contiguous().to(device)
     Y_val_t = torch.tensor(Y_val, dtype=torch.float32).contiguous().to(device)
 
-    # 特征维度在最后一位 (dim=2)
-    input_size = X_train_t.shape[2]
-    output_size = Y_train_t.shape[2]
-
+    # 动态获取特征维度 (兼容 3D 轨迹与 2D 点云)
+    if len(X_train_t.shape) == 3:
+        input_size = X_train_t.shape[2]
+        output_size = Y_train_t.shape[2]
+    elif len(X_train_t.shape) == 2:
+        input_size = X_train_t.shape[1]
+        output_size = Y_train_t.shape[1]
+        
+        if args.data_source == "point_cloud":
+            print("\n[WARNING] 正在将 2D 点云强制转换为 Seq_len=1 的 3D 张量送入 LSTM")
+            X_train_t = X_train_t.unsqueeze(1)  # (100000, 3) -> (100000, 1, 3)
+            Y_train_t = Y_train_t.unsqueeze(1)
+    else:
+        raise ValueError(f"无法处理的数据维度: {X_train_t.shape}")
+    
     # 循环训练
     combinations = [20] 
     N_epoch = 40000

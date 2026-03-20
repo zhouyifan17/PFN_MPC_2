@@ -40,7 +40,7 @@ class Trainer:
                 penalty_upper = torch.relu(Y_pred - upper_bound) ** 2
                 loss_bounds = torch.mean(penalty_lower + penalty_upper)
                 
-                loss_distill = loss_distill_point + 0.0 * loss_bounds
+                loss_distill = loss_distill_point + 0.5 * loss_bounds
                 
                 # 加权总loss
                 loss_train = (1.0 - distill_weight) * loss_task + distill_weight * loss_distill
