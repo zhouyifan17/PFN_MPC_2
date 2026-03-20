@@ -37,8 +37,8 @@ def main():
     weights = extract_lstm_weights_ca(model)
 
     # 3. 配置 MPC 代价矩阵并实例化求解器
-    Q = np.eye(N * ny) * 100
-    R = np.eye(N * nu)
+    Q = np.eye(ny) * 100
+    R = np.eye(nu)
     
     print("Initializing LSTM-MPC Solver...")
     mpc = LSTM_MPCSolver(nx, ny, nu, N, Q, R, n_hidden, weights, output_indices=[0])

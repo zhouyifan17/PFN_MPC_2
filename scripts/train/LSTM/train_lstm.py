@@ -12,6 +12,7 @@ from src.engine.trainer import Trainer
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train LSTM with or without Distillation")
+    parser.add_argument("--dataset", type=str, default="van_der_pol", help="数据集名称 (van_der_pol, four_tank, pendulum)")
     parser.add_argument("--mode", type=str, default="standard", choices=["standard", "distill"])
     parser.add_argument("--data_source", type=str, default="real", choices=["real", "surrogate", "point_cloud"], help="训练数据的来源")
     parser.add_argument("--seq_len", type=int, default=1, help="Sequence length used for teacher labels")
@@ -25,23 +26,23 @@ def main():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     
-    data_dir = "data/processed/van_der_pol"
+    data_dir = f"data/processed/{args.dataset}"
     mode_str = "distill" if args.mode == "distill" else "standard"
     save_prefix = f"{args.data_source}_{mode_str}"
-    ckpt_dir = f"checkpoints/LSTM/van_der_pol/{save_prefix}"
-    results_dir = f"results/van_der_pol/LSTM/{save_prefix}"
+    
+    ckpt_dir = f"checkpoints/LSTM/{args.dataset}/{save_prefix}"
+    results_dir = f"results/{args.dataset}/LSTM/{save_prefix}"
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(ckpt_dir, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device} | Data Source: {args.data_source.upper()} | Mode: {args.mode.upper()}")
+    print(f"Using device: {device} | Dataset: {args.dataset.upper()} | Data Source: {args.data_source.upper()} | Mode: {args.mode.upper()}")
     
     # 加载 3D 训练数据
     if args.data_source == "real":
         X_train_3d = np.load(os.path.join(data_dir, "X_train.npy"))
         Y_train_3d = np.load(os.path.join(data_dir, "Y_train.npy"))
     elif args.data_source == "surrogate":
-        # 加载 TabPFN 离线推演出来的虚拟轨迹
         syn_dir = os.path.join(data_dir, "synthetic")
         X_train_3d = np.load(os.path.join(syn_dir, "X_train_surrogate.npy"))
         Y_train_3d = np.load(os.path.join(syn_dir, "Y_train_surrogate.npy"))
@@ -92,7 +93,7 @@ def main():
         
         if args.data_source == "point_cloud":
             print("\n[WARNING] 正在将 2D 点云强制转换为 Seq_len=1 的 3D 张量送入 LSTM")
-            X_train_t = X_train_t.unsqueeze(1)  # (100000, 3) -> (100000, 1, 3)
+            X_train_t = X_train_t.unsqueeze(1)
             Y_train_t = Y_train_t.unsqueeze(1)
     else:
         raise ValueError(f"无法处理的数据维度: {X_train_t.shape}")
@@ -112,7 +113,7 @@ def main():
         trainer = Trainer(model, device, ckpt_dir, model_name=f"model_LSTM_idx_{idx_i}.pth")
 
         exp_info = {
-            "Dataset": "van_der_pol",
+            "Dataset": args.dataset,
             "Model": "LSTM",
             "Mode": args.mode,
             "N_Trajs": n_train,
