@@ -39,7 +39,7 @@ def main():
 
     exp_prefix = f"LSTM_four_tank_N{args.n_train}_{args.data_source}_{args.mode}_H{N}"
     
-    ckpt_path = f"checkpoints/LSTM/four_tank/{args.data_source}_{args.mode}/model_LSTM_idx_{args.idx_opt}.pth"
+    ckpt_path = f"checkpoints/LSTM/four_tank/{args.data_source}_{args.mode}_N{args.n_train}/model_LSTM_idx_{args.idx_opt}.pth"
     results_dir = f"results/four_tank/LSTM/mpc"
     os.makedirs(results_dir, exist_ok=True)
 

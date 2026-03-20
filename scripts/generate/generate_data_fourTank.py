@@ -3,10 +3,23 @@ import numpy as np
 import sys
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
+from tqdm import tqdm
 
 sys.path.append(os.path.abspath("."))
 from src.dynamics.four_tank import four_tank
-from src.utils.signals import multisine
+from src.utils.data_generator import generate_excitation_signal, simulate_system, plot_and_save_data, build_dataset
+
+def generate_random_step_signal(total_steps, min_len=100, max_len=400, val_min=0.5, val_max=4.0):
+    """
+    生成一段随机的阶跃信号作为基础工作点
+    """
+    signal = np.zeros(total_steps)
+    idx = 0
+    while idx < total_steps:
+        step_len = np.random.randint(min_len, max_len)
+        signal[idx : idx + step_len] = np.random.uniform(val_min, val_max)
+        idx += step_len
+    return signal
 
 def main():
     save_dir = "data/processed/four_tank"
@@ -14,74 +27,70 @@ def main():
     plot_dir = "results/four_tank/data_plots"
     os.makedirs(plot_dir, exist_ok=True)
     
-    print("Generating Four-Tank data: 1 long trajectory (8000 steps)...")
-    
-    # 1. 生成 u1 的分段常数参考
-    u1_data1 =  np.tile([1.000], (500, 1))
-    u1_data2 =  np.tile([1.500], (500, 1))
-    u1_data3 =  np.tile([2.000], (500, 1))
-    u1_data4 =  np.tile([2.500], (500, 1))
-    u1_data_all = np.concatenate((u1_data1, u1_data2, u1_data3, u1_data4), axis=0)
-    u1_data_all = np.concatenate((u1_data_all, u1_data_all, u1_data_all, u1_data_all), axis=0)
-
-    # 2. 生成 u2 的分段常数参考
-    u2_data1 =  np.tile([1.000], (2000, 1))
-    u2_data2 =  np.tile([1.500], (2000, 1))
-    u2_data3 =  np.tile([2.000], (2000, 1))
-    u2_data4 =  np.tile([2.500], (2000, 1))
-    u2_data_all = np.concatenate((u2_data1, u2_data2, u2_data3, u2_data4), axis=0)
-
-    # 3. 添加多频正弦扰动
-    u_data_1_additional = 0.5 * multisine(N_points_per_period=8000, N_periods=1, pmin=1, pmax=500, n_crest_factor_optim=100, seed=42)
-    u_data_2_additional = 0.5 * multisine(N_points_per_period=8000, N_periods=1, pmin=1, pmax=500, n_crest_factor_optim=100, seed=36)
-    
-    u1_data = u1_data_all + u_data_1_additional.reshape(-1, 1)
-    u2_data = u2_data_all + u_data_2_additional.reshape(-1, 1)
-    u_data = np.hstack((u1_data, u2_data)) # Shape: (8000, 2)
-    
-    # 4. 物理系统参数与仿真初始化
-    Ts = 5 
+    # 实验配置
+    N_episodes = 50
+    T_total = 2400       
+    N_train_steps = 2000 
+    Ts = 5.0
     params = {'a1': 1.31e-4, 'a2': 1.51e-4, 'a3': 9.27e-5, 'a4': 8.82e-5, 
               'gamma_a': 0.3, 'gamma_b': 0.4, 'g': 9.81, 'Sc': 0.06}
-    x0 = np.array([0.5, 0.5, 0.5, 0.5])
+    four_tank_ode = lambda t, y, u_i: four_tank(t, y, float(u_i[0]), float(u_i[1]), params)
     
-    x_states = [x0]
+    print(f"Generating Four-Tank data: {N_episodes} trajectories...")
     
-    # 5. 仿真循环
-    print("Simulating ODE...")
-    for i in range(len(u_data)):
-        u1, u2 = float(u1_data[i, 0]), float(u2_data[i, 0])
-        sol = solve_ivp(lambda t, y: four_tank(t, y, u1, u2, params), [0, Ts], x0, method='RK45')
-        x0 = sol.y[:, -1]
-        x_states.append(x0)
-
-    x_states = np.array(x_states) # Shape: (8001, 4)
+    X_train_list, Y_train_list = [], []
+    X_val_list, Y_val_list = [], []
+    t_vec_plot, x_states_plot, u_plot = None, None, None
     
-    # 6. 构建监督学习输入特征 (X: [u1, u2, x1, x2, x3, x4], Y: [x1_next, x2_next, x3_next, x4_next])
-    X = []
-    Y = []
-    for i in range(len(u_data)):
-        X.append(np.concatenate((u_data[i, :], x_states[i, :])))
-        Y.append(x_states[i + 1, :])
+    for ep in tqdm(range(N_episodes), desc="Simulating Episodes"):
+        np.random.seed(42 + ep)
         
-    X = np.array(X) # Shape: (8000, 6)
-    Y = np.array(Y) # Shape: (8000, 4)
+        # 1. 随机初始状态
+        x0 = np.random.uniform(low=0.2, high=2.0, size=4)
+        
+        # 2. 生成激励信号
+        u1_base = generate_random_step_signal(T_total, val_min=1.0, val_max=4.0)
+        u2_base = generate_random_step_signal(T_total, val_min=1.0, val_max=4.0)
+        amp1 = np.random.uniform(low=0.5, high=3.0)
+        amp2 = np.random.uniform(low=0.5, high=3.0)
+        
+        u1_fluct = generate_excitation_signal(T_period=T_total, seed=42+ep, amplitude=amp1).flatten()
+        u2_fluct = generate_excitation_signal(T_period=T_total, seed=100+ep, amplitude=amp2).flatten()
+        
+        u1_data = np.clip(u1_base + u1_fluct, 0.0, 6.0)
+        u2_data = np.clip(u2_base + u2_fluct, 0.0, 6.0)
+        u_data = np.vstack((u1_data, u2_data)).T # Shape: (2400, 2)
+        
+        # 3. 仿真生成数据
+        t_vec, x_states = simulate_system(four_tank_ode, u_data, x0, Ts)
+        
+        X_tr, Y_tr, X_va, Y_va = build_dataset(u_data, x_states, N_train_steps)
+        
+        X_train_list.append(X_tr)
+        Y_train_list.append(Y_tr)
+        X_val_list.append(X_va)
+        Y_val_list.append(Y_va)
 
-    # 7. 切分训练集与验证集，并增加 N_episodes=1 的维度以对齐工程规范
-    X_train = X[0:7500, :][np.newaxis, :, :] # Shape: (1, 7500, 6)
-    Y_train = Y[0:7500, :][np.newaxis, :, :] # Shape: (1, 7500, 4)
-    X_val = X[7500:, :][np.newaxis, :, :]    # Shape: (1, 500, 6)
-    Y_val = Y[7500:, :][np.newaxis, :, :]    # Shape: (1, 500, 4)
+        # 记录第一条轨迹供绘图展示
+        if ep == 0:
+            t_vec_plot, x_states_plot, u_plot = t_vec, x_states, u_data
 
-    # 8. 保存数据
+    # 4. 堆叠并保存
+    X_train, Y_train = np.array(X_train_list), np.array(Y_train_list)
+    X_val, Y_val = np.array(X_val_list), np.array(Y_val_list)
+
     np.save(os.path.join(save_dir, "X_train.npy"), X_train)
     np.save(os.path.join(save_dir, "Y_train.npy"), Y_train)
     np.save(os.path.join(save_dir, "X_val.npy"), X_val)
     np.save(os.path.join(save_dir, "Y_val.npy"), Y_val)
 
-    print(f"Data successfully generated and saved to {save_dir}")
+    print(f"\nData successfully generated and saved to {save_dir}")
     print(f"Train Shape: X={X_train.shape}, Y={Y_train.shape}")
     print(f"Val Shape  : X={X_val.shape}, Y={Y_val.shape}")
+
+    # 绘图并保存
+    plot_and_save_data(t_vec_plot, x_states_plot, u_plot, save_dir=plot_dir)
+    print("Sample trajectory plot saved.")
 
 if __name__ == "__main__":
     main()

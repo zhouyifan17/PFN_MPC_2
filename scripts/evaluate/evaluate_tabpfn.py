@@ -10,6 +10,16 @@ from sklearn.preprocessing import StandardScaler
 sys.path.append(".")
 from src.models import TabPFNWrapper
 
+def get_args():
+    parser = argparse.ArgumentParser(description="Evaluate TabPFN with different Context Strategies")
+    parser.add_argument("--dataset", type=str, default="van_der_pol", help="数据集名称 (van_der_pol, four_tank)")
+    parser.add_argument("--context_mode", type=str, default="mixed", 
+                        choices=["single", "mixed", "independent"],
+                        help="single: 1条轨迹作context; mixed: 50条混合抽样; independent: 逐条独立抽样")
+    parser.add_argument("--seq_len", type=int, default=1, help="滑动窗口长度")
+    parser.add_argument("--context_size", type=int, default=2048, help="TabPFN 使用的最大样本数")
+    return parser.parse_args()
+
 def create_sliding_windows_3d(X_train_3d, X_val_3d, Y_train_3d, Y_val_3d, seq_len):
     """
     处理 3D 轨迹数据 [N_episodes, T_steps, Features]
@@ -45,29 +55,20 @@ def create_sliding_windows_3d(X_train_3d, X_val_3d, Y_train_3d, Y_val_3d, seq_le
     return (np.array(X_train_seq_list), np.array(Y_train_seq_list), 
             np.array(X_val_seq_list), np.array(Y_val_seq_list))
 
-def get_args():
-    parser = argparse.ArgumentParser(description="Evaluate TabPFN with different Context Strategies")
-    parser.add_argument("--context_mode", type=str, default="mixed", 
-                        choices=["single", "mixed", "independent"],
-                        help="single: 1条轨迹作context; mixed: 50条混合抽样; independent: 逐条独立抽样")
-    parser.add_argument("--seq_len", type=int, default=1, help="滑动窗口长度")
-    parser.add_argument("--context_size", type=int, default=2048, help="TabPFN 使用的最大样本数")
-    return parser.parse_args()
-
 def main():
     args = get_args()
     
     # 1. 路径与超参数设置
-    dataset_name = "van_der_pol"
+    dataset_name = args.dataset
     data_dir = f"data/processed/{dataset_name}"
     results_dir = f"results/{dataset_name}/TabPFN_eval"
     os.makedirs(results_dir, exist_ok=True)
     
     # 2. 加载 3D 原始数据
-    print("Loading 3D raw data...")
-    X_train_raw = np.load(os.path.join(data_dir, "X_train.npy")) # [50, 2000, 3]
+    print(f"Loading data for {dataset_name}...")
+    X_train_raw = np.load(os.path.join(data_dir, "X_train.npy"))
     Y_train_raw = np.load(os.path.join(data_dir, "Y_train.npy"))
-    X_val_raw = np.load(os.path.join(data_dir, "X_val.npy"))     # [50, 410, 3]
+    X_val_raw = np.load(os.path.join(data_dir, "X_val.npy"))
     Y_val_raw = np.load(os.path.join(data_dir, "Y_val.npy"))
 
     N_episodes = X_train_raw.shape[0]
@@ -113,7 +114,6 @@ def main():
         print(f"Fitting TabPFN with {c_size} mixed context windows from all 50 episodes...")
         teacher.fit(pool_X[indices], pool_Y[indices])
         
-        # 评估所有 50 条 Val 轨迹
         X_val_tensor = torch.tensor(X_val_scaled.reshape(-1, X_val_scaled.shape[-1]), dtype=torch.float32).to(device)
         with torch.no_grad():
             Y_pred_all = teacher(X_val_tensor).cpu().numpy()
@@ -129,7 +129,6 @@ def main():
         print(f"Fitting TabPFN with {c_size} context windows from Episode 0 ONLY...")
         teacher.fit(pool_X[indices], pool_Y[indices])
         
-        # 评估所有 50 条 Val 轨迹
         X_val_tensor = torch.tensor(X_val_scaled.reshape(-1, X_val_scaled.shape[-1]), dtype=torch.float32).to(device)
         with torch.no_grad():
             Y_pred_all = teacher(X_val_tensor).cpu().numpy()
@@ -165,7 +164,7 @@ def main():
     print(f"\n>>> Mode [{args.context_mode.upper()}] Validation MSE: {mse:.6f} <<<")
     
     # 保存结果
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     log_file_path = os.path.join(project_root, "forecast_results.txt")
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_message = (
@@ -187,23 +186,26 @@ def main():
     Y_pred_plot = Y_pred_all[:num_val_steps]
     Y_true_plot = Y_val_3d[ep_to_plot]
 
-    plt.figure(figsize=(12, 6))
+    ny = Y_true_plot.shape[1]
     
-    plt.subplot(2, 1, 1)
-    plt.plot(Y_true_plot[:, 0], label='True $x_1$ (solve_ivp)', color='black', linewidth=1.5)
-    plt.plot(Y_pred_plot[:, 0], label='TabPFN Predicted $x_1$', color='red', linestyle='--', linewidth=1.5) # type: ignore
-    plt.ylabel('$x_1$')
-    plt.title(f'TabPFN Validation (Mode: {args.context_mode}, Ep: {ep_to_plot})')
-    plt.legend()
-    plt.grid(True)
-
-    plt.subplot(2, 1, 2)
-    plt.plot(Y_true_plot[:, 1], label='True $x_2$ (solve_ivp)', color='black', linewidth=1.5)
-    plt.plot(Y_pred_plot[:, 1], label='TabPFN Predicted $x_2$', color='red', linestyle='--', linewidth=1.5) # type: ignore
-    plt.xlabel('Validation Samples (Time Steps)')
-    plt.ylabel('$x_2$')
-    plt.legend()
-    plt.grid(True)
+    plt.figure(figsize=(12, 3 * ny))
+    
+    for i in range(ny):
+        plt.subplot(ny, 1, i + 1)
+        plt.plot(Y_true_plot[:, i], label=f'True $x_{i+1}$ (solve_ivp)', color='black', linewidth=1.5)
+        plt.plot(Y_pred_plot[:, i], label=f'TabPFN Predicted $x_{i+1}$', color='red', linestyle='--', linewidth=1.5) # type: ignore
+        plt.ylabel(f'$x_{i+1}$')
+        
+        # 仅在第一张图加上标题
+        if i == 0:
+            plt.title(f'TabPFN Validation ({dataset_name} | Mode: {args.context_mode}, Ep: {ep_to_plot})')
+        
+        # 仅在最后一张图加上 x 轴标签
+        if i == ny - 1:
+            plt.xlabel('Validation Samples (Time Steps)')
+            
+        plt.legend()
+        plt.grid(True)
 
     plt.tight_layout()
     plot_path = os.path.join(results_dir, f"tabpfn_val_{args.context_mode}_seq{args.seq_len}.png")

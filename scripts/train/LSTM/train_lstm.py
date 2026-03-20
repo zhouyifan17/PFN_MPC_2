@@ -12,6 +12,7 @@ from src.engine.trainer import Trainer
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train LSTM with or without Distillation")
+    parser.add_argument("--gpu", type=str, default="0")
     parser.add_argument("--dataset", type=str, default="van_der_pol", help="数据集名称 (van_der_pol, four_tank, pendulum)")
     parser.add_argument("--mode", type=str, default="standard", choices=["standard", "distill"])
     parser.add_argument("--data_source", type=str, default="real", choices=["real", "surrogate", "point_cloud"], help="训练数据的来源")
@@ -26,19 +27,10 @@ def main():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     
-    data_dir = f"data/processed/{args.dataset}"
-    mode_str = "distill" if args.mode == "distill" else "standard"
-    save_prefix = f"{args.data_source}_{mode_str}"
-    
-    ckpt_dir = f"checkpoints/LSTM/{args.dataset}/{save_prefix}"
-    results_dir = f"results/{args.dataset}/LSTM/{save_prefix}"
-    os.makedirs(results_dir, exist_ok=True)
-    os.makedirs(ckpt_dir, exist_ok=True)
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device} | Dataset: {args.dataset.upper()} | Data Source: {args.data_source.upper()} | Mode: {args.mode.upper()}")
+    data_dir = f"data/processed/{args.dataset}"
     
-    # 加载 3D 训练数据
+    # 1. 加载 3D 训练数据
     if args.data_source == "real":
         X_train_3d = np.load(os.path.join(data_dir, "X_train.npy"))
         Y_train_3d = np.load(os.path.join(data_dir, "Y_train.npy"))
@@ -62,9 +54,21 @@ def main():
     
     X_val = X_val_3d
     Y_val = Y_val_3d
-    print(f"Using {n_train} {args.data_source} trajectories for training, {len(X_val)} real trajectories for validation.")
+    
+    # 3. 动态构建保存路径
+    mode_str = "distill" if args.mode == "distill" else "standard"
+    save_prefix = f"{args.data_source}_{mode_str}_N{n_train}"
+    
+    ckpt_dir = f"checkpoints/LSTM/{args.dataset}/{save_prefix}"
+    results_dir = f"results/{args.dataset}/LSTM/{save_prefix}"
+    os.makedirs(results_dir, exist_ok=True)
+    os.makedirs(ckpt_dir, exist_ok=True)
 
-    # 蒸馏模式，加载老师标签
+    print(f"Using device: {device} | Dataset: {args.dataset.upper()} | Source: {args.data_source.upper()} | Mode: {args.mode.upper()} | N_train: {n_train}")
+    print(f"Using {n_train} {args.data_source} trajectories for training, {len(X_val)} real trajectories for validation.")
+    print(f"Checkpoints will be saved to: {ckpt_dir}")
+
+    # 4. 蒸馏模式，加载老师标签
     t_pred, t_quant, t_pred_t, t_quant_t = None, None, None, None
     if args.mode == "distill":
         distill_dir = os.path.join(data_dir, "distill")
@@ -77,13 +81,13 @@ def main():
         t_pred_t = torch.tensor(t_pred, dtype=torch.float32).contiguous().to(device)
         t_quant_t = torch.tensor(t_quant, dtype=torch.float32).contiguous().to(device)
 
-    # 转换为 PyTorch Tensor
+    # 5. 转换为 PyTorch Tensor
     X_train_t = torch.tensor(X_train, dtype=torch.float32).contiguous().to(device)
     Y_train_t = torch.tensor(Y_train, dtype=torch.float32).contiguous().to(device)
     X_val_t = torch.tensor(X_val, dtype=torch.float32).contiguous().to(device)
     Y_val_t = torch.tensor(Y_val, dtype=torch.float32).contiguous().to(device)
 
-    # 动态获取特征维度 (兼容 3D 轨迹与 2D 点云)
+    # 6. 动态获取特征维度 (兼容 3D 轨迹与 2D 点云)
     if len(X_train_t.shape) == 3:
         input_size = X_train_t.shape[2]
         output_size = Y_train_t.shape[2]
@@ -98,7 +102,7 @@ def main():
     else:
         raise ValueError(f"无法处理的数据维度: {X_train_t.shape}")
     
-    # 循环训练
+    # 7. 循环训练
     combinations = [20] 
     N_epoch = 40000
     ablation_results = []
