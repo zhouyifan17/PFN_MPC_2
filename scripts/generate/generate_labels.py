@@ -11,6 +11,16 @@ from sklearn.model_selection import KFold
 sys.path.append(".")
 from src.models import TabPFNWrapper
 
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", type=str, default="van_der_pol", help="数据集名称 (van_der_pol, four_tank, pendulum)")
+    parser.add_argument("--seq_len", type=int, default=1, help="sliding window length")
+    parser.add_argument("--context_size", type=int, default=2048, help="TabPFN最大上下文样本数")
+    parser.add_argument("--n_splits", type=int, default=5, help="交叉预测的折数 (K-Fold)")
+    parser.add_argument("--batch_size", type=int, default=256, help="推理批次大小")
+    parser.add_argument("--seed", type=int, default=42)
+    return parser.parse_args()
+
 def create_sliding_windows_3d(X_3d, Y_3d, seq_len):
     """
     针对 3D 多轨迹数据 [N_episodes, T_steps, Features] 的滑动窗口生成器。
@@ -31,16 +41,6 @@ def create_sliding_windows_3d(X_3d, Y_3d, seq_len):
             Y_seq_list.append(Y_ep[i + seq_len - 1])
             
     return np.array(X_seq_list), np.array(Y_seq_list)
-
-def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="van_der_pol")
-    parser.add_argument("--seq_len", type=int, default=1, help="sliding window length")
-    parser.add_argument("--context_size", type=int, default=2048, help="TabPFN最大上下文样本数")
-    parser.add_argument("--n_splits", type=int, default=5, help="交叉预测的折数 (K-Fold)")
-    parser.add_argument("--batch_size", type=int, default=256, help="推理批次大小")
-    parser.add_argument("--seed", type=int, default=42)
-    return parser.parse_args()
 
 def main():
     args = get_args()

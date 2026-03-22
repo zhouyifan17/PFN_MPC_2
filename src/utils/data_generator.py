@@ -73,30 +73,35 @@ def build_dataset(u_network, x_states, N_train):
     return X_train, Y_train, X_val, Y_val
 
 
-def plot_and_save_data(t_vec, x_states, u_data, save_dir):
+def plot_and_save_data(t_vec, x_states, u_data, save_dir, filename='system_response.png'):
     """通用的画图与保存工具"""
     os.makedirs(save_dir, exist_ok=True)
+    
     nx = x_states.shape[1]
-    
-    plt.figure(figsize=(10, 2 * (nx + 1)))
-    # 动态绘制所有状态
-    for i in range(nx):
-        plt.subplot(nx + 1, 1, i + 1)
-        plt.plot(t_vec, x_states[:, i], label=f'x_{i+1}')
-        plt.ylabel(f'x_{i+1}')
-        plt.grid()
-        plt.legend()
-    
-    # 绘制输入
-    plt.subplot(nx + 1, 1, nx + 1)
+    if len(u_data.shape) == 1:
+        u_data = u_data.reshape(-1, 1)
     nu = u_data.shape[1]
-    for i in range(nu):
-        plt.plot(t_vec[:-1], u_data[:, i], label=f'u_{i+1}')
-    plt.ylabel('u')
-    plt.xlabel('t')
-    plt.grid()
-    plt.legend()
     
+    total_plots = nx + nu
+    plt.figure(figsize=(10, 2 * total_plots))
+    
+    for i in range(nx):
+        plt.subplot(total_plots, 1, i + 1)
+        plt.plot(t_vec, x_states[:, i], label=f'x_{i+1}', color='#1f77b4')
+        plt.ylabel(f'x_{i+1}')
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.legend(loc='upper right')
+        
+    for i in range(nu):
+        plt.subplot(total_plots, 1, nx + i + 1)
+        plt.plot(t_vec[:-1], u_data[:, i], label=f'u_{i+1}', color='#ff7f0e')
+        plt.ylabel(f'u_{i+1}')
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.legend(loc='upper right')
+        
+        if i == nu - 1:
+            plt.xlabel('t')
+            
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, 'system_response.png'))
+    plt.savefig(os.path.join(save_dir, filename), dpi=150)
     plt.close()
