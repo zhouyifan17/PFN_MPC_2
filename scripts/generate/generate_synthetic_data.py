@@ -30,6 +30,7 @@ def main():
     data_dir = f"data/processed/{args.dataset}"
     save_dir = os.path.join(data_dir, "synthetic")
     plot_dir = f"results/{args.dataset}/synthetic_plots"
+    os.makedirs(plot_dir, exist_ok=True)
     os.makedirs(save_dir, exist_ok=True)
     
     # 加载真实的 3D 原始数据
@@ -132,7 +133,6 @@ def main():
     
     # 绘制原轨迹和生成轨迹的对比图
     if args.method == "surrogate" and len(Y_syn) > 1:
-        # 最多只能画 Y_syn 生成的轨迹数量 (排除第0条，共49条)
         max_plots = min(args.n_plots, Y_syn.shape[0] - 1)
         print(f"\nGenerating {max_plots} trajectory comparison plots...")
         
@@ -159,7 +159,7 @@ def main():
             plt.tight_layout()
             plot_path = os.path.join(plot_dir, f"syn_comparison_{args.dataset}_ep{ep_to_plot}.png")
             plt.savefig(plot_path)
-            plt.close() # 释放内存，防止批量画图时卡死
+            plt.close()
             
         print(f"Successfully saved {max_plots} comparison plots to: {plot_dir}")
 
