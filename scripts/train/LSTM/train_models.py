@@ -8,17 +8,20 @@ from scipy.io import savemat
 
 sys.path.append(os.path.abspath("."))
 from src.models import LSTMModel
+from src.models import DeepARModel
 from src.engine.trainer import Trainer
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train LSTM with or without Distillation")
+    parser = argparse.ArgumentParser(description="Train Models with or without Distillation")
     parser.add_argument("--gpu", type=str, default="0")
+    parser.add_argument("--model_type", type=str, default="LSTM", choices=["LSTM", "DeepAR", "FFN"], help="选择要训练的底层模型架构")
     parser.add_argument("--dataset", type=str, default="van_der_pol", help="数据集名称 (van_der_pol, four_tank, pendulum)")
     parser.add_argument("--mode", type=str, default="standard", choices=["standard", "distill"])
     parser.add_argument("--data_source", type=str, default="real", choices=["real", "surrogate", "point_cloud"], help="训练数据的来源")
     parser.add_argument("--seq_len", type=int, default=1, help="Sequence length used for teacher labels")
     parser.add_argument("--distill_weight", type=float, default=0.5, help="Weight of the distillation loss")
     parser.add_argument("--n_train", type=int, default=50, help="Number of trajectories to use for training (1 to 50)")
+    parser.add_argument("--n_context_trajs", type=int, default=1, help="生成人工数据时使用的 context 轨迹数")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -29,6 +32,7 @@ def main():
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_dir = f"data/processed/{args.dataset}"
+    model_type = args.model_type.upper()
     
     # 1. 加载 3D 训练数据
     if args.data_source == "real":
@@ -36,35 +40,47 @@ def main():
         Y_train_3d = np.load(os.path.join(data_dir, "Y_train.npy"))
     elif args.data_source == "surrogate":
         syn_dir = os.path.join(data_dir, "synthetic")
-        X_train_3d = np.load(os.path.join(syn_dir, "X_train_surrogate.npy"))
-        Y_train_3d = np.load(os.path.join(syn_dir, "Y_train_surrogate.npy"))
+        X_train_3d = np.load(os.path.join(syn_dir, f"X_train_surrogate_ctx{args.n_context_trajs}.npy"))
+        Y_train_3d = np.load(os.path.join(syn_dir, f"Y_train_surrogate_ctx{args.n_context_trajs}.npy"))
     elif args.data_source == "point_cloud":
         syn_dir = os.path.join(data_dir, "synthetic")
-        X_train_3d = np.load(os.path.join(syn_dir, "X_train_point_cloud.npy"))
-        Y_train_3d = np.load(os.path.join(syn_dir, "Y_train_point_cloud.npy"))
+        X_train_3d = np.load(os.path.join(syn_dir, f"X_train_point_cloud_ctx{args.n_context_trajs}.npy"))
+        Y_train_3d = np.load(os.path.join(syn_dir, f"Y_train_point_cloud_ctx{args.n_context_trajs}.npy"))
         
     # 验证集使用真实物理数据
     X_val_3d = np.load(os.path.join(data_dir, "X_val.npy"))
     Y_val_3d = np.load(os.path.join(data_dir, "Y_val.npy"))
     
     # 2. 轨迹数量切分 (--n_train 控制)
-    n_train = min(args.n_train, X_train_3d.shape[0])
-    X_train = X_train_3d[:n_train]
-    Y_train = Y_train_3d[:n_train]
-    
+    T_steps = X_val_3d.shape[1]
+    if args.data_source == "point_cloud":
+        equiv_n_points = args.n_train * T_steps
+        n_train_points = min(equiv_n_points, X_train_3d.shape[0])
+        X_train = X_train_3d[:n_train_points]
+        Y_train = Y_train_3d[:n_train_points]
+    else:
+        n_train = min(args.n_train, X_train_3d.shape[0])
+        X_train = X_train_3d[:n_train]
+        Y_train = Y_train_3d[:n_train]
+        
     X_val = X_val_3d
     Y_val = Y_val_3d
     
     # 3. 动态构建保存路径
     mode_str = "distill" if args.mode == "distill" else "standard"
-    save_prefix = f"{args.data_source}_{mode_str}_N{n_train}"
+    if args.data_source in ["surrogate", "point_cloud"]:
+        save_prefix = f"{args.data_source}_ctx{args.n_context_trajs}_{mode_str}_N{n_train}"
+    else:
+        save_prefix = f"{args.data_source}_{mode_str}_N{n_train}"
     
-    ckpt_dir = f"checkpoints/LSTM/{args.dataset}/{save_prefix}"
-    results_dir = f"results/{args.dataset}/LSTM/{save_prefix}"
+    ckpt_dir = f"checkpoints/{model_type}/{args.dataset}/{save_prefix}"
+    results_dir = f"results/{args.dataset}/{model_type}/{save_prefix}"
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(ckpt_dir, exist_ok=True)
 
-    print(f"Using device: {device} | Dataset: {args.dataset.upper()} | Source: {args.data_source.upper()} | Mode: {args.mode.upper()} | N_train: {n_train}")
+    print(f"Using device: {device} | Dataset: {args.dataset.upper()} | Source: {args.data_source.upper()} | Mode: {args.mode.upper()}")
+    if args.data_source in ["surrogate", "point_cloud"]:
+        print(f"Context Trajs Used for Generation: {args.n_context_trajs}")
     print(f"Using {n_train} {args.data_source} trajectories for training, {len(X_val)} real trajectories for validation.")
     print(f"Checkpoints will be saved to: {ckpt_dir}")
 
@@ -96,7 +112,6 @@ def main():
         output_size = Y_train_t.shape[1]
         
         if args.data_source == "point_cloud":
-            print("\n[WARNING] 正在将 2D 点云强制转换为 Seq_len=1 的 3D 张量送入 LSTM")
             X_train_t = X_train_t.unsqueeze(1)
             Y_train_t = Y_train_t.unsqueeze(1)
     else:
@@ -108,19 +123,30 @@ def main():
     ablation_results = []
 
     for idx_i, n_hidden in enumerate(combinations, start=1):
-        print(f"\n--- Training LSTM (Hidden: {n_hidden}) ---")
+        print(f"\n--- Training {model_type} (Hidden: {n_hidden}) ---")
         
-        model = LSTMModel(input_size, n_hidden, output_size)
+        # 动态实例化模型
+        if args.model_type == "LSTM":
+            model = LSTMModel(input_size, n_hidden, output_size)
+        elif args.model_type == "DeepAR":
+            model = DeepARModel(input_size, n_hidden, output_size)
+        elif args.model_type == "FFN":
+            # 预留给未来：model = FFNModel(input_size, n_hidden, output_size)
+            raise NotImplementedError("FFN model is not yet implemented.")
+        else:
+            raise ValueError(f"Unknown model type: {args.model_type}")
+        
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10000, gamma=0.1)
 
-        trainer = Trainer(model, device, ckpt_dir, model_name=f"model_LSTM_idx_{idx_i}.pth")
+        trainer = Trainer(model, device, ckpt_dir, model_name=f"model_{model_type}_idx_{idx_i}.pth")
 
         exp_info = {
             "Dataset": args.dataset,
-            "Model": "LSTM",
+            "Model": model_type,
             "Mode": args.mode,
             "N_Trajs": n_train,
+            "Ctx_Trajs": args.n_context_trajs if args.data_source != "real" else "N/A",
             "Hidden_Size": n_hidden,
             "Epochs": N_epoch
         }

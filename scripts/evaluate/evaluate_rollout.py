@@ -9,9 +9,16 @@ import time
 sys.path.append(os.path.abspath("."))
 import src.models
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Evaluate Multi-step Rollout MSE")
+    parser.add_argument("--model_path", type=str, required=True, help="Path to the trained .pth model")
+    parser.add_argument("--rollout_steps", type=int, default=10, help="Number of steps for auto-regressive rollout")
+    return parser.parse_args()
+
+
 def evaluate_rollout(model, X_val, Y_val, device, rollout_steps=10):
     """
-    进行极其严格的自回归多步滚动预测评估。
+    进行自回归多步滚动预测评估。
     完全模拟 MPC 求解器中的前瞻 (Horizon) 预测行为。
     """
     model.eval()
@@ -81,11 +88,6 @@ def evaluate_rollout(model, X_val, Y_val, device, rollout_steps=10):
     
     return avg_single_mse, avg_rollout_mse
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Evaluate Multi-step Rollout MSE")
-    parser.add_argument("--model_path", type=str, required=True, help="Path to the trained .pth model")
-    parser.add_argument("--rollout_steps", type=int, default=10, help="Number of steps for auto-regressive rollout")
-    return parser.parse_args()
 
 def main():
     args = parse_args()

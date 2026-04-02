@@ -8,7 +8,7 @@ sys.path.append(os.path.abspath("."))
 from src.dynamics.four_tank import four_tank
 from src.utils.data_generator import generate_excitation_signal, simulate_system, plot_and_save_data, build_dataset
 
-def generate_random_step_signal(total_steps, min_len=100, max_len=400, val_min=0.5, val_max=4.0):
+def generate_random_step_signal(total_steps, min_len=100, max_len=300, val_min=0.5, val_max=2.0):
     """
     生成一段随机的阶跃信号作为基础工作点
     """
@@ -56,19 +56,19 @@ def main():
         np.random.seed(args.seed + ep)
         
         # 随机初始状态
-        x0 = np.random.uniform(low=0.5, high=3.0, size=4)
+        x0 = np.random.uniform(low=0.2, high=1.5, size=4)
         
         # 生成激励信号
-        u1_base = generate_random_step_signal(args.t_total, val_min=2.0, val_max=2.0)
-        u2_base = generate_random_step_signal(args.t_total, val_min=2.0, val_max=2.0)
-        amp1 = np.random.uniform(low=0.2, high=1.5)
-        amp2 = np.random.uniform(low=0.2, high=1.5)
+        u1_base = generate_random_step_signal(args.t_total, val_min=0.5, val_max=2.5)
+        u2_base = generate_random_step_signal(args.t_total, val_min=0.5, val_max=2.5)
+        amp1 = np.random.uniform(low=0.2, high=0.8)
+        amp2 = np.random.uniform(low=0.2, high=0.8)
         
         u1_fluct = generate_excitation_signal(T_period=args.t_total, seed=args.seed+ep, amplitude=amp1).flatten()
         u2_fluct = generate_excitation_signal(T_period=args.t_total, seed=100+ep, amplitude=amp2).flatten()
         
-        u1_data = np.clip(u1_base + u1_fluct, 0.0, 6.0)
-        u2_data = np.clip(u2_base + u2_fluct, 0.0, 6.0)
+        u1_data = np.clip(u1_base + u1_fluct, 0.0, 4.5)
+        u2_data = np.clip(u2_base + u2_fluct, 0.0, 4.5)
         u_data = np.vstack((u1_data, u2_data)).T # Shape: (t_total, 2)
         
         # 仿真生成数据

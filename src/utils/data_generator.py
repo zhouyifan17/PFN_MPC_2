@@ -10,15 +10,13 @@ def generate_excitation_signal(T_period=2410, pmin=1, pmax=500, seed=42, amplitu
     输入:
         amplitude: 用于控制激励信号的整体能量幅值
     返回:
-        u_data: 原始激励信号 (通常用于神经网络输入，模拟包含了执行器动态的黑盒)
-        u_filtered: 滤波后的信号 (通常用于实际物理系统的 ODE 仿真)
+        u_data: 原始激励信号
     """
     u_multisine = amplitude * multisine(N_points_per_period=T_period, N_periods=1, 
                                 pmin=pmin, pmax=pmax, n_crest_factor_optim=100, seed=seed)
     x_wave = np.linspace(-np.pi, np.pi, T_period)
     u_data = u_multisine + (amplitude * 0.5) * np.sin(x_wave)
 
-    # 直接返回原始信号的二维数组形式 (N, 1)
     return u_data.reshape(-1, 1)
 
 

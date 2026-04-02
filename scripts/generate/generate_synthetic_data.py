@@ -19,10 +19,16 @@ def parse_args():
     parser.add_argument("--n_points", type=int, default=100000, help="点云模式下生成的总散点数")
     parser.add_argument("--batch_size", type=int, default=2000, help="TabPFN 批量推理的大小")
     parser.add_argument("--n_plots", type=int, default=1, help="生成轨迹对比图的数量 (默认 1)")
+    parser.add_argument("--context_size", type=int, default=8000, help="TabPFN 使用的最大样本数")
+    parser.add_argument("--n_context_trajs", type=int, default=1, help="用作 Context 的真实轨迹条数 (默认 1)")
+    parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
 def main():
     args = parse_args()
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device} | Method: {args.method.upper()}")
     
@@ -39,40 +45,47 @@ def main():
     Y_train_true = np.load(os.path.join(data_dir, "Y_train.npy"))
     
     # 获取时间步数和特征维度
+    N_total_episodes = X_train_true.shape[0]
     T_steps = X_train_true.shape[1]
     nx = Y_train_true.shape[2]
     nu = X_train_true.shape[2] - nx
     
-    # 仅使用 Trajectory 0 作为 context
-    print("\nSetting up Teacher with ONLY Trajectory 0 as Context...")
-    X_context = X_train_true[0]
-    Y_context = Y_train_true[0]
+    n_ctx = min(args.n_context_trajs, N_total_episodes)
+    
+    # 使用前 n_ctx 条轨迹作为 context
+    print(f"\nSetting up Teacher with Trajectories 0 to {n_ctx-1} ({n_ctx} total) as Context...")
+    X_context = X_train_true[:n_ctx].reshape(-1, X_train_true.shape[2])
+    Y_context = Y_train_true[:n_ctx].reshape(-1, Y_train_true.shape[2])
     
     scaler_X = StandardScaler()
     X_context_scaled = scaler_X.fit_transform(X_context)
     
     teacher = TabPFNWrapper(device=device, n_ensemble=3) # type: ignore
-    c_size = min(2048, len(X_context_scaled))
+    c_size = min(args.context_size, len(X_context_scaled))
+    if len(X_context_scaled) > c_size:
+        indices = np.random.choice(len(X_context_scaled), c_size, replace=False)
+    else:
+        indices = np.arange(len(X_context_scaled))
+        
     teacher.fit(X_context_scaled[:c_size], Y_context[:c_size])
 
     start_time = time.time()
-    
-    # 分支 A：Surrogate (串行连续轨迹)
+    # 分支 A：Surrogate
     if args.method == "surrogate":
-        print("\n[Surrogate Mode] Paralleling autoregressive rollout...")
+        print(f"\n[Surrogate Model rollout for remaining {N_total_episodes - n_ctx} trajectories...")
         X_syn = np.zeros_like(X_train_true)
         Y_syn = np.zeros_like(Y_train_true)
         
-        # 存入第 0 条真实轨迹
-        X_syn[0] = X_train_true[0]
-        Y_syn[0] = Y_train_true[0]
+        # 存入前 n_ctx 条作为真实参考的轨迹
+        X_syn[:n_ctx] = X_train_true[:n_ctx]
+        Y_syn[:n_ctx] = Y_train_true[:n_ctx]
         
-        # 提取真实初始状态和控制序列
-        curr_states = X_train_true[1:, 0, nu:]
+        if n_ctx < N_total_episodes:
+            curr_states = X_train_true[n_ctx:, 0, nu:]
         
         with torch.no_grad():
             for t in tqdm(range(T_steps), desc="Rollout Steps"):
-                u_t = X_train_true[1:, t, 0:nu]
+                u_t = X_train_true[n_ctx:, t, 0:nu]
                 X_batch = np.concatenate([u_t, curr_states], axis=1)
                 
                 X_batch_scaled = scaler_X.transform(X_batch)
@@ -80,8 +93,8 @@ def main():
                 
                 pred_next_states = teacher(X_tensor).cpu().numpy()
                 
-                X_syn[1:, t, :] = X_batch
-                Y_syn[1:, t, :] = pred_next_states
+                X_syn[n_ctx:, t, :] = X_batch
+                Y_syn[n_ctx:, t, :] = pred_next_states
                 curr_states = pred_next_states
                 
                 if np.isnan(curr_states).any() or np.max(np.abs(curr_states)) > 100.0:
@@ -107,7 +120,6 @@ def main():
         Y_syn = np.zeros((args.n_points, nx))
         
         with torch.no_grad():
-            # 分批次推演以防止 GPU OOM
             for i in tqdm(range(0, args.n_points, args.batch_size), desc="Batch Inferencing"):
                 X_batch = X_syn[i : i + args.batch_size]
                 X_batch_scaled = scaler_X.transform(X_batch)
@@ -120,8 +132,8 @@ def main():
     elapsed = time.time() - start_time
     print(f"\n{args.method.upper()} generation completed in {elapsed:.2f} seconds!")
     
-    x_save_path = os.path.join(save_dir, f"X_train_{args.method}.npy")
-    y_save_path = os.path.join(save_dir, f"Y_train_{args.method}.npy")
+    x_save_path = os.path.join(save_dir, f"X_train_{args.method}_ctx{n_ctx}.npy")
+    y_save_path = os.path.join(save_dir, f"Y_train_{args.method}_ctx{n_ctx}.npy")
     np.save(x_save_path, X_syn)
     np.save(y_save_path, Y_syn)
     
@@ -132,14 +144,13 @@ def main():
     print(f"Shape of Synthetic Y: {Y_syn.shape}")
     
     # 绘制原轨迹和生成轨迹的对比图
-    if args.method == "surrogate" and len(Y_syn) > 1:
-        max_plots = min(args.n_plots, Y_syn.shape[0] - 1)
+    if args.method == "surrogate" and Y_syn.shape[0] > n_ctx:
+        max_plots = min(args.n_plots, Y_syn.shape[0] - n_ctx)
         print(f"\nGenerating {max_plots} trajectory comparison plots...")
         
         t_vec = np.arange(T_steps)
         
-        # 从第 1 条开始画，直到 max_plots
-        for ep_to_plot in range(1, max_plots + 1):
+        for ep_to_plot in range(n_ctx, n_ctx + max_plots):
             plt.figure(figsize=(12, 3 * nx))
             
             for i in range(nx):
@@ -157,7 +168,7 @@ def main():
                 plt.grid(True)
                 
             plt.tight_layout()
-            plot_path = os.path.join(plot_dir, f"syn_comparison_{args.dataset}_ep{ep_to_plot}.png")
+            plot_path = os.path.join(plot_dir, f"syn_comparison_{args.dataset}_ctx{n_ctx}_ep{ep_to_plot}.png")
             plt.savefig(plot_path)
             plt.close()
             

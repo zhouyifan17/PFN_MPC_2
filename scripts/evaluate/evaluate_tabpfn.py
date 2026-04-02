@@ -22,7 +22,7 @@ def get_args():
                         choices=["single_step", "rolling"],
                         help="single_step: 提供真实状态(单步); rolling: 滚动预测(自回归)")
     parser.add_argument("--seq_len", type=int, default=1, help="滑动窗口长度")
-    parser.add_argument("--context_size", type=int, default=2048, help="TabPFN 使用的最大样本数")
+    parser.add_argument("--context_size", type=int, default=8000, help="TabPFN 使用的最大样本数")
     parser.add_argument("--n_plots", type=int, default=1, help="绘制预测轨迹对比图的数量")
     return parser.parse_args()
 
