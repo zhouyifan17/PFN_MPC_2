@@ -5,6 +5,7 @@ import numpy as np
 import argparse
 import matplotlib.pyplot as plt
 from scipy.io import savemat
+from sklearn.preprocessing import StandardScaler
 
 sys.path.append(os.path.abspath("."))
 from src.models import LSTMModel
@@ -32,7 +33,7 @@ def main():
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_dir = f"data/processed/{args.dataset}"
-    model_type = args.model_type.upper()
+    model_type = args.model_type
     
     # 1. 加载 3D 训练数据
     if args.data_source == "real":

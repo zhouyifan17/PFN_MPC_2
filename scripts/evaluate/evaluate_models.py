@@ -21,7 +21,7 @@ def get_args():
     parser.add_argument("--pred_mode", type=str, default="rolling",
                         choices=["single_step", "rolling"],
                         help="single_step: 教师强制单步预测; rolling: 自回归滚动预测")
-    parser.add_argument("--n_plots", type=int, default=1, help="绘制预测轨迹对比图的数量")
+    parser.add_argument("--n_plots", type=int, default=50, help="绘制预测轨迹对比图的数量")
     
     # TabPFN 参数
     parser.add_argument("--context_mode", type=str, default="mixed", choices=["single", "mixed", "independent"], help="TabPFN 上下文策略")
@@ -256,7 +256,7 @@ def main():
         print(f"Loading {args.model_type.upper()} from {args.model_path} (Mode: {args.pred_mode})...")
         model = torch.load(args.model_path, map_location=device, weights_only=False)
         
-        # 注意 LSTM/DeepAR 都在原始物理尺度推理
+        # 注意 LSTM/DeepAR 都在原始物理尺度推理 TODO: DeepAR引入了标准差，不合适在原始尺度进行推理!
         if args.pred_mode == "single_step":
             preds_3d, sigma_3d = single_step_predict_nn(model, X_val_raw, device, args.model_type)
         else:
@@ -302,14 +302,14 @@ def main():
             plt.plot(t_vec, Y_true_plot[:, i], label=f'True $x_{i+1}$ (ODE)', color='black', linewidth=1.5)
             
             # 判断标号文字
-            pred_label = f'{args.model_type.upper()} Mean $\mu$' if args.model_type == "DeepAR" else f'{args.model_type.upper()} Predicted $x_{i+1}$'
+            pred_label = fr'{args.model_type.upper()} Mean $\mu$' if args.model_type == "DeepAR" else f'{args.model_type.upper()} Predicted $x_{i+1}$'
             plt.plot(t_vec, Y_pred_plot[:, i], label=pred_label, color='red', linestyle='--', linewidth=1.5)
             
             # DeepAR 95% 置信区间 (2-Sigma)
             if args.model_type == "DeepAR" and Y_sigma_all_unscaled is not None:
                 lower_bound = Y_pred_plot[:, i] - 2 * Y_sigma_plot[:, i]
                 upper_bound = Y_pred_plot[:, i] + 2 * Y_sigma_plot[:, i]
-                plt.fill_between(t_vec, lower_bound, upper_bound, color='red', alpha=0.2, label='95% Confidence Interval ($\pm 2\sigma$)')
+                plt.fill_between(t_vec, lower_bound, upper_bound, color='red', alpha=0.2, label=r'95% Confidence Interval ($\pm 2\sigma$)')
             
             plt.ylabel(f'$x_{i+1}$')
             

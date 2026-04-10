@@ -3,6 +3,7 @@ import torch.nn as nn
 
 class DeepARModel(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
+        super().__init__()
         self.lstm = nn. LSTM(input_size, hidden_size, batch_first=True)
         # 2个输出头，均值和标准差
         self.mu_layer = nn.Linear(hidden_size, output_size)
