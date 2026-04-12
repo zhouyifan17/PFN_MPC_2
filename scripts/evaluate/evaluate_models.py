@@ -4,9 +4,9 @@ import torch
 import argparse
 import datetime
 import numpy as np
+import joblib
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
 
 sys.path.append(".")
 from src.models import TabPFNWrapper
@@ -30,8 +30,7 @@ def get_args():
     parser.add_argument("--n_context_trajs", type=int, default=1, help="mixed 模式下用作 Context 的真实轨迹条数")
     
     # LSTM/DeepAR 参数
-    parser.add_argument("--model_path", type=str, default="", help="模型的 .pth 路径")
-    
+    parser.add_argument("--model_path", type=str, required=True, default="", help="模型的 .pth 路径")
     
     return parser.parse_args()
 
@@ -92,11 +91,11 @@ def rolling_predict_tabpfn(teacher, X_val_3d_scaled, seq_len, nx, nu, device):
     return np.transpose(np.array(all_preds_scaled), (1, 0, 2))
 
 # LSTM 和 DeepAR 的通用辅助函数
-def rolling_predict_nn(model, X_val_raw, nx, nu, device, model_type):
+def rolling_predict_nn(model, X_val, nx, nu, device, model_type):
     """
     自回归滚动预测
     """
-    N_episodes, T_steps, _ = X_val_raw.shape
+    N_episodes, T_steps, _ = X_val.shape
     model.eval()
     
     num_layers = model.lstm.num_layers
@@ -106,14 +105,13 @@ def rolling_predict_nn(model, X_val_raw, nx, nu, device, model_type):
     c = torch.zeros(num_layers, N_episodes, hidden_size).to(device)
     
     preds_mu = []
-    preds_sigma = [] # 用于 DeepAR
+    preds_sigma = []
     
     # 提取 t=0 时的初始输入
-    curr_x = torch.tensor(X_val_raw[:, 0:1, :], dtype=torch.float32).to(device)
+    curr_x = torch.tensor(X_val[:, 0:1, :], dtype=torch.float32).to(device)
     
     with torch.no_grad():
-        for t in tqdm(range(T_steps), desc=f"{model_type.upper()} Rolling Steps"):
-            # 前向传播
+        for t in tqdm(range(T_steps), desc=f"{model_type} Rolling Steps"):
             if model_type == "DeepAR":
                 mu, sigma, (h, c) = model(curr_x, (h, c))
                 preds_mu.append(mu.cpu().numpy())
@@ -126,7 +124,7 @@ def rolling_predict_nn(model, X_val_raw, nx, nu, device, model_type):
                 
             # 拼接未来真实的控制信号
             if t < T_steps - 1:
-                true_u = torch.tensor(X_val_raw[:, t+1:t+2, :nu], dtype=torch.float32).to(device)
+                true_u = torch.tensor(X_val[:, t+1:t+2, :nu], dtype=torch.float32).to(device)
                 curr_x = torch.cat([true_u, pred_nx], dim=2)
                 
     if model_type == "DeepAR":
@@ -135,10 +133,10 @@ def rolling_predict_nn(model, X_val_raw, nx, nu, device, model_type):
         return np.concatenate(preds_mu, axis=1), None
 
 
-def single_step_predict_nn(model, X_val_scaled_raw, device, model_type):
+def single_step_predict_nn(model, X_val, device, model_type):
     """单步预测"""
     model.eval()
-    X_t = torch.tensor(X_val_scaled_raw, dtype=torch.float32).to(device)
+    X_t = torch.tensor(X_val, dtype=torch.float32).to(device)
     h = torch.zeros(model.lstm.num_layers, X_t.shape[0], model.lstm.hidden_size).to(device)
     c = torch.zeros(model.lstm.num_layers, X_t.shape[0], model.lstm.hidden_size).to(device)
     
@@ -157,7 +155,6 @@ def main():
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # 实验命名与路径创建
     dataset_name = args.dataset
     data_dir = f"data/processed/{dataset_name}"
     
@@ -165,9 +162,9 @@ def main():
         ctx_str = f"ctx{args.n_context_trajs}" if args.context_mode == "mixed" else "ctx1_each"
         exp_name = f"TabPFN_{args.context_mode}_{ctx_str}_{args.pred_mode}_seq{args.seq_len}"
     else:
-        if not args.model_path: raise ValueError(f"评估 {args.model_type.upper()} 时必须提供 --model_path")
+        if not args.model_path: raise ValueError(f"评估 {args.model_type} 时必须提供 --model_path")
         model_name = os.path.basename(os.path.dirname(args.model_path)) + "_" + os.path.basename(args.model_path).split('.')[0]
-        exp_name = f"{args.model_type.upper()}_{model_name}_{args.pred_mode}"
+        exp_name = f"{args.model_type}_{model_name}_{args.pred_mode}"
         
     results_dir = os.path.join(f"results/{dataset_name}/unified_eval", exp_name)
     os.makedirs(results_dir, exist_ok=True)
@@ -182,32 +179,32 @@ def main():
     N_episodes, num_val_steps, _ = X_val_raw.shape
     nx = Y_val_raw.shape[-1]
     nu = X_val_raw.shape[-1] - nx
-    print(f"Detected dimensions - Control (nu): {nu}, State (nx): {nx}")
 
     # 3. 统一全局标准化
-    print("Fitting Scalers globally on raw data...")
-    scaler_X = StandardScaler()
-    scaler_Y = StandardScaler()
-    
-    scaler_X.fit(X_train_raw.reshape(-1, X_train_raw.shape[-1]))
-    scaler_Y.fit(Y_train_raw.reshape(-1, Y_train_raw.shape[-1]))
+    print("Loading global Scalers from local storage...")
+    scaler_x_path = os.path.join(data_dir, "scaler_X.pkl")
+    scaler_y_path = os.path.join(data_dir, "scaler_Y.pkl")
+    if not os.path.exists(scaler_x_path) or not os.path.exists(scaler_y_path):
+        raise FileNotFoundError(f"Scalers not found in {data_dir}.")
+        
+    scaler_X = joblib.load(scaler_x_path)
+    scaler_Y = joblib.load(scaler_y_path)
     
     X_train_scaled_raw = scaler_X.transform(X_train_raw.reshape(-1, X_train_raw.shape[-1])).reshape(X_train_raw.shape)
     X_val_scaled_raw = scaler_X.transform(X_val_raw.reshape(-1, X_val_raw.shape[-1])).reshape(X_val_raw.shape)
     Y_train_scaled_raw = scaler_Y.transform(Y_train_raw.reshape(-1, Y_train_raw.shape[-1])).reshape(Y_train_raw.shape)
-    
+
     # 4. 预测推理
     np.random.seed(42)
     torch.manual_seed(42)
     Y_pred_all_unscaled = None
-    Y_sigma_all_unscaled = None #  DeepAR 存储标准差
+    Y_sigma_all_unscaled = None
     
     if args.model_type == "TabPFN":
         print(f"Initializing TabPFN (Mode: {args.pred_mode} | Context: {args.context_mode})...")
         X_train_3d_sc, Y_train_3d_sc, X_val_3d_sc, _ = create_sliding_windows_3d(
             X_train_scaled_raw, X_val_scaled_raw, Y_train_scaled_raw, Y_val_raw, args.seq_len
         )
-        
         teacher = TabPFNWrapper(device=device, n_ensemble=3) # type: ignore
         
         if args.context_mode == "mixed":
@@ -253,18 +250,17 @@ def main():
         Y_pred_all_unscaled = scaler_Y.inverse_transform(Y_pred_all_scaled)
               
     elif args.model_type in ["LSTM", "DeepAR"]:
-        print(f"Loading {args.model_type.upper()} from {args.model_path} (Mode: {args.pred_mode})...")
+        print(f"Loading {args.model_type} from {args.model_path} (Mode: {args.pred_mode})...")
         model = torch.load(args.model_path, map_location=device, weights_only=False)
         
-        # 注意 LSTM/DeepAR 都在原始物理尺度推理 TODO: DeepAR引入了标准差，不合适在原始尺度进行推理!
         if args.pred_mode == "single_step":
-            preds_3d, sigma_3d = single_step_predict_nn(model, X_val_raw, device, args.model_type)
+            preds_3d, sigma_3d = single_step_predict_nn(model, X_val_scaled_raw, device, args.model_type)
         else:
-            preds_3d, sigma_3d = rolling_predict_nn(model, X_val_raw, nx, nu, device, args.model_type)
-            
-        Y_pred_all_unscaled = preds_3d.reshape(-1, nx)
+            preds_3d, sigma_3d = rolling_predict_nn(model, X_val_scaled_raw, nx, nu, device, args.model_type)
+        # 反标准化
+        Y_pred_all_unscaled = scaler_Y.inverse_transform(preds_3d.reshape(-1, nx))
         if sigma_3d is not None:
-            Y_sigma_all_unscaled = sigma_3d.reshape(-1, nx)
+            Y_sigma_all_unscaled = sigma_3d.reshape(-1, nx) * scaler_Y.scale_
 
     # 5. 计算指标
     print("\nComputing Evaluation Metrics...")
@@ -290,7 +286,6 @@ def main():
         
         Y_pred_plot = Y_pred_all_unscaled[start_idx:end_idx] # type: ignore
         Y_true_plot = Y_val_raw[ep]
-        
         if Y_sigma_all_unscaled is not None:
             Y_sigma_plot = Y_sigma_all_unscaled[start_idx:end_idx]
             
@@ -302,7 +297,7 @@ def main():
             plt.plot(t_vec, Y_true_plot[:, i], label=f'True $x_{i+1}$ (ODE)', color='black', linewidth=1.5)
             
             # 判断标号文字
-            pred_label = fr'{args.model_type.upper()} Mean $\mu$' if args.model_type == "DeepAR" else f'{args.model_type.upper()} Predicted $x_{i+1}$'
+            pred_label = fr'{args.model_type} Mean $\mu$' if args.model_type == "DeepAR" else f'{args.model_type} Predicted $x_{i+1}$'
             plt.plot(t_vec, Y_pred_plot[:, i], label=pred_label, color='red', linestyle='--', linewidth=1.5)
             
             # DeepAR 95% 置信区间 (2-Sigma)
@@ -315,7 +310,7 @@ def main():
             
             if i == 0:
                 ctx_info = f" | Ctx: {args.n_context_trajs}" if args.model_type == "TabPFN" and args.context_mode == "mixed" else ""
-                plt.title(f'[{args.model_type.upper()}] Validation (Data: {dataset_name} | Mode: {args.pred_mode}{ctx_info} | Ep: {ep})')
+                plt.title(f'[{args.model_type}] Validation (Data: {dataset_name} | Mode: {args.pred_mode}{ctx_info} | Ep: {ep})')
             if i == nx - 1:
                 plt.xlabel('Validation Samples (Time Steps)')
                 

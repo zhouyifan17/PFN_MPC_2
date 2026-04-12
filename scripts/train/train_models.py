@@ -3,6 +3,7 @@ import torch
 import sys
 import numpy as np
 import argparse
+import joblib
 import matplotlib.pyplot as plt
 from scipy.io import savemat
 from sklearn.preprocessing import StandardScaler
@@ -35,7 +36,7 @@ def main():
     data_dir = f"data/processed/{args.dataset}"
     model_type = args.model_type
     
-    # 1. 加载 3D 训练数据
+    # 1. 加载训练集和验证集
     if args.data_source == "real":
         X_train_3d = np.load(os.path.join(data_dir, "X_train.npy"))
         Y_train_3d = np.load(os.path.join(data_dir, "Y_train.npy"))
@@ -48,7 +49,6 @@ def main():
         X_train_3d = np.load(os.path.join(syn_dir, f"X_train_point_cloud_ctx{args.n_context_trajs}.npy"))
         Y_train_3d = np.load(os.path.join(syn_dir, f"Y_train_point_cloud_ctx{args.n_context_trajs}.npy"))
         
-    # 验证集使用真实物理数据
     X_val_3d = np.load(os.path.join(data_dir, "X_val.npy"))
     Y_val_3d = np.load(os.path.join(data_dir, "Y_val.npy"))
     
@@ -67,7 +67,21 @@ def main():
     X_val = X_val_3d
     Y_val = Y_val_3d
     
-    # 3. 动态构建保存路径
+    # 加载本地 Scaler 对数据进行标准化
+    scaler_x_path = os.path.join(data_dir, "scaler_X.pkl")
+    scaler_y_path = os.path.join(data_dir, "scaler_Y.pkl")
+    
+    if not os.path.exists(scaler_x_path) or not os.path.exists(scaler_y_path):
+        raise FileNotFoundError(f"Scalers not found in {data_dir}.")
+    
+    scaler_X = joblib.load(scaler_x_path)
+    scaler_Y = joblib.load(scaler_y_path)
+    X_train = scaler_X.transform(X_train.reshape(-1, X_train.shape[-1])).reshape(X_train.shape)
+    Y_train = scaler_Y.transform(Y_train.reshape(-1, Y_train.shape[-1])).reshape(Y_train.shape)
+    X_val = scaler_X.transform(X_val.reshape(-1, X_val.shape[-1])).reshape(X_val.shape)
+    Y_val = scaler_Y.transform(Y_val.reshape(-1, Y_val.shape[-1])).reshape(Y_val.shape)
+    
+    # 3. 构建保存路径
     mode_str = "distill" if args.mode == "distill" else "standard"
     if args.data_source in ["surrogate", "point_cloud"]:
         save_prefix = f"{args.data_source}_ctx{args.n_context_trajs}_{mode_str}_N{n_train}"
@@ -95,6 +109,15 @@ def main():
         t_pred = t_pred_full[:n_train]
         t_quant = t_quant_full[:n_train]
 
+        # 教师标签标准化
+        t_pred = scaler_Y.transform(t_pred.reshape(-1, t_pred.shape[-1])).reshape(t_pred.shape)
+        n_quantiles = t_quant.shape[-1]
+        scaled_quant = np.zeros_like(t_quant)
+        for q in range(n_quantiles):
+            q_data = t_quant[..., q] 
+            scaled_quant[..., q] = scaler_Y.transform(q_data.reshape(-1, q_data.shape[-1])).reshape(q_data.shape)
+        t_quant = scaled_quant
+        
         t_pred_t = torch.tensor(t_pred, dtype=torch.float32).contiguous().to(device)
         t_quant_t = torch.tensor(t_quant, dtype=torch.float32).contiguous().to(device)
 
@@ -132,7 +155,6 @@ def main():
         elif args.model_type == "DeepAR":
             model = DeepARModel(input_size, n_hidden, output_size)
         elif args.model_type == "FFN":
-            # 预留给未来：model = FFNModel(input_size, n_hidden, output_size)
             raise NotImplementedError("FFN model is not yet implemented.")
         else:
             raise ValueError(f"Unknown model type: {args.model_type}")

@@ -2,7 +2,9 @@ import os
 import numpy as np
 import sys
 import argparse
+import joblib
 from tqdm import tqdm
+from sklearn.preprocessing import StandardScaler
 
 sys.path.append(os.path.abspath("."))
 from src.dynamics.four_tank import four_tank
@@ -89,10 +91,22 @@ def main():
                 filename=img_name
             )
 
-    # 保存
+    # 堆叠成 3D 张量 [N_episodes, T_steps, Features]
     X_train, Y_train = np.array(X_train_list), np.array(Y_train_list)
     X_val, Y_val = np.array(X_val_list), np.array(Y_val_list)
 
+    # 保存Scaler
+    scaler_X = StandardScaler()
+    scaler_Y = StandardScaler()
+    scaler_X.fit(X_train.reshape(-1, X_train.shape[-1]))
+    scaler_Y.fit(Y_train.reshape(-1, Y_train.shape[-1]))
+    
+    scaler_x_path = os.path.join(save_dir, "scaler_X.pkl")
+    scaler_y_path = os.path.join(save_dir, "scaler_Y.pkl")
+    joblib.dump(scaler_X, scaler_x_path)
+    joblib.dump(scaler_Y, scaler_y_path)
+    
+    # 保存原始数据
     np.save(os.path.join(save_dir, "X_train.npy"), X_train)
     np.save(os.path.join(save_dir, "Y_train.npy"), Y_train)
     np.save(os.path.join(save_dir, "X_val.npy"), X_val)
