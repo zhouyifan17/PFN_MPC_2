@@ -43,11 +43,10 @@ class Trainer:
             # 知识蒸馏 loss 计算
             if t_pred is not None and t_quant is not None:
                 if is_deepar:
-                    # DeepAR 的蒸馏 loss TODO: 这里DeepAR的loss是Gemini写的，请验证合理性
                     loss_distill_mu = torch.nn.functional.mse_loss(mu, t_pred)
                     lower_bound = t_quant[:, :, :, 0]
                     upper_bound = t_quant[:, :, :, -1]
-                    t_sigma_target = torch.clamp((upper_bound - lower_bound) / 3.0, min=1e-4)
+                    t_sigma_target = torch.clamp((upper_bound - lower_bound) / 4.0, min=1e-4)
                     loss_distill_sigma = torch.nn.functional.mse_loss(sigma, t_sigma_target)
                     loss_distill = loss_distill_mu + loss_distill_sigma
                 else:
@@ -81,7 +80,6 @@ class Trainer:
                 else:
                     loss_val = torch.mean((outputs_val - Y_val) ** 2) / torch.mean(Y_val ** 2)
                     val_mse = torch.mean((outputs_val - Y_val) ** 2).item()
-                    # TODO: 这里的 loss_val 和 val_mse 有区别吗
                     
             # 记录数据
             l_train = loss_train.item()

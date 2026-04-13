@@ -30,7 +30,7 @@ def get_args():
     parser.add_argument("--n_context_trajs", type=int, default=1, help="mixed 模式下用作 Context 的真实轨迹条数")
     
     # LSTM/DeepAR 参数
-    parser.add_argument("--model_path", type=str, required=True, default="", help="模型的 .pth 路径")
+    parser.add_argument("--model_path", type=str, default="", help="模型的 .pth 路径")
     
     return parser.parse_args()
 
@@ -71,12 +71,18 @@ def rolling_predict_tabpfn(teacher, X_val_3d_scaled, seq_len, nx, nu, device):
     
     current_windows = X_val_3d_scaled[:, 0, :].copy() 
     all_preds_scaled = []
+    all_quants_scaled = []
+    
+    # 获取 95% 置信区间对应的分位数
+    target_quantiles = [0.025, 0.975]
     
     for t in tqdm(range(num_val_steps), desc="TabPFN Rolling Steps"):
         curr_tensor = torch.tensor(current_windows, dtype=torch.float32).to(device)
         with torch.no_grad():
             preds_scaled = teacher(curr_tensor).cpu().numpy()
+            quants_scaled = teacher.predict_quantiles(curr_tensor, target_quantiles).cpu().numpy()
         all_preds_scaled.append(preds_scaled)
+        all_quants_scaled.append(quants_scaled)
         
         if t < num_val_steps - 1:
             next_windows = np.empty_like(current_windows)
@@ -88,7 +94,9 @@ def rolling_predict_tabpfn(teacher, X_val_3d_scaled, seq_len, nx, nu, device):
             next_windows[:, -feature_dim:] = next_step_features
             current_windows = next_windows
             
-    return np.transpose(np.array(all_preds_scaled), (1, 0, 2))
+    preds_out = np.transpose(np.array(all_preds_scaled), (1, 0, 2))
+    quants_out = np.transpose(np.array(all_quants_scaled), (1, 0, 2, 3)) # shape: [N_ep, T, nx, 2]
+    return preds_out, quants_out
 
 # LSTM 和 DeepAR 的通用辅助函数
 def rolling_predict_nn(model, X_val, nx, nu, device, model_type):
@@ -198,7 +206,8 @@ def main():
     np.random.seed(42)
     torch.manual_seed(42)
     Y_pred_all_unscaled = None
-    Y_sigma_all_unscaled = None
+    Y_sigma_all_unscaled = None # 专供 DeepAR
+    Y_quant_all_unscaled = None # 专供 TabPFN
     
     if args.model_type == "TabPFN":
         print(f"Initializing TabPFN (Mode: {args.pred_mode} | Context: {args.context_mode})...")
@@ -206,6 +215,7 @@ def main():
             X_train_scaled_raw, X_val_scaled_raw, Y_train_scaled_raw, Y_val_raw, args.seq_len
         )
         teacher = TabPFNWrapper(device=device, n_ensemble=3) # type: ignore
+        target_quantiles = [0.025, 0.975]
         
         if args.context_mode == "mixed":
             n_ctx = min(args.n_context_trajs, X_train_3d_sc.shape[0])
@@ -222,13 +232,17 @@ def main():
             
             if args.pred_mode == "single_step":
                 X_val_tensor = torch.tensor(X_val_3d_sc.reshape(-1, X_val_3d_sc.shape[-1]), dtype=torch.float32).to(device)
-                with torch.no_grad(): Y_pred_all_scaled = teacher(X_val_tensor).cpu().numpy()
+                with torch.no_grad(): 
+                    Y_pred_all_scaled = teacher(X_val_tensor).cpu().numpy()
+                    Y_quant_all_scaled = teacher.predict_quantiles(X_val_tensor, target_quantiles).cpu().numpy()
             else:
-                preds_3d = rolling_predict_tabpfn(teacher, X_val_3d_sc, args.seq_len, nx, nu, device)
+                preds_3d, quants_3d = rolling_predict_tabpfn(teacher, X_val_3d_sc, args.seq_len, nx, nu, device)
                 Y_pred_all_scaled = preds_3d.reshape(-1, nx)
+                Y_quant_all_scaled = quants_3d.reshape(-1, nx, 2)
            
         elif args.context_mode == "independent":
             preds_list = []
+            quants_list = []
             for ep in tqdm(range(N_episodes), desc="Independent Episodes"):
                 pool_X = X_train_3d_sc[ep]
                 pool_Y = Y_train_3d_sc[ep]
@@ -241,14 +255,20 @@ def main():
                     X_val_ep_tensor = torch.tensor(X_val_3d_sc[ep], dtype=torch.float32).to(device)
                     with torch.no_grad():
                         preds_list.append(teacher(X_val_ep_tensor).cpu().numpy())
+                        quants_list.append(teacher.predict_quantiles(X_val_ep_tensor, target_quantiles).cpu().numpy())
                 else:
                     X_val_ep_3d_scaled = X_val_3d_sc[ep:ep+1]
-                    pred_3d = rolling_predict_tabpfn(teacher, X_val_ep_3d_scaled, args.seq_len, nx, nu, device)
+                    pred_3d, quant_3d = rolling_predict_tabpfn(teacher, X_val_ep_3d_scaled, args.seq_len, nx, nu, device)
                     preds_list.append(pred_3d[0])
+                    quants_list.append(quant_3d[0])
             Y_pred_all_scaled = np.concatenate(preds_list, axis=0)
+            Y_quant_all_scaled = np.concatenate(quants_list, axis=0)
             
         Y_pred_all_unscaled = scaler_Y.inverse_transform(Y_pred_all_scaled)
-              
+        Y_quant_all_unscaled = np.zeros_like(Y_quant_all_scaled)
+        Y_quant_all_unscaled[..., 0] = scaler_Y.inverse_transform(Y_quant_all_scaled[..., 0]) # 2.5% 下界
+        Y_quant_all_unscaled[..., 1] = scaler_Y.inverse_transform(Y_quant_all_scaled[..., 1]) # 97.5% 上界
+        
     elif args.model_type in ["LSTM", "DeepAR"]:
         print(f"Loading {args.model_type} from {args.model_path} (Mode: {args.pred_mode})...")
         model = torch.load(args.model_path, map_location=device, weights_only=False)
@@ -288,24 +308,35 @@ def main():
         Y_true_plot = Y_val_raw[ep]
         if Y_sigma_all_unscaled is not None:
             Y_sigma_plot = Y_sigma_all_unscaled[start_idx:end_idx]
+        if Y_quant_all_unscaled is not None:
+            Y_quant_plot = Y_quant_all_unscaled[start_idx:end_idx]
             
         plt.figure(figsize=(12, 3 * nx))
         t_vec = np.arange(num_val_steps)
         
         for i in range(nx):
             plt.subplot(nx, 1, i + 1)
-            plt.plot(t_vec, Y_true_plot[:, i], label=f'True $x_{i+1}$ (ODE)', color='black', linewidth=1.5)
+            plt.plot(t_vec, Y_true_plot[:, i], label=f'True $x_{i+1}$', color='black', linewidth=1.5)
             
             # 判断标号文字
-            pred_label = fr'{args.model_type} Mean $\mu$' if args.model_type == "DeepAR" else f'{args.model_type} Predicted $x_{i+1}$'
+            if args.model_type == "DeepAR":
+                pred_label = fr'{args.model_type} Mean $\mu$'
+            elif args.model_type == "TabPFN":
+                pred_label = fr'{args.model_type} Median Predict'
+            else:
+                pred_label = f'{args.model_type} Predicted $x_{i+1}$'
             plt.plot(t_vec, Y_pred_plot[:, i], label=pred_label, color='red', linestyle='--', linewidth=1.5)
             
             # DeepAR 95% 置信区间 (2-Sigma)
             if args.model_type == "DeepAR" and Y_sigma_all_unscaled is not None:
                 lower_bound = Y_pred_plot[:, i] - 2 * Y_sigma_plot[:, i]
                 upper_bound = Y_pred_plot[:, i] + 2 * Y_sigma_plot[:, i]
-                plt.fill_between(t_vec, lower_bound, upper_bound, color='red', alpha=0.2, label=r'95% Confidence Interval ($\pm 2\sigma$)')
-            
+                plt.fill_between(t_vec, lower_bound, upper_bound, color='red', alpha=0.2, label=r'95% Confidence Interval')
+            # TabPFN 分位数边界区间
+            elif args.model_type == "TabPFN" and Y_quant_all_unscaled is not None:
+                lower_bound = Y_quant_plot[:, i, 0] # 2.5%
+                upper_bound = Y_quant_plot[:, i, 1] # 97.5%
+                plt.fill_between(t_vec, lower_bound, upper_bound, color='blue', alpha=0.2, label=r'95% Confidence Interval')
             plt.ylabel(f'$x_{i+1}$')
             
             if i == 0:
