@@ -18,12 +18,13 @@ def parse_args():
     parser.add_argument("--n_episodes", type=int, default=50, help="生成的总轨迹数量")
     parser.add_argument("--t_total", type=int, default=2410, help="每条轨迹的总时间步数")
     parser.add_argument("--n_train_steps", type=int, default=2000, help="划分给训练集的步数")
+    parser.add_argument("--noise_std", type=float, default=0.05, help="状态测量的观测噪声标准差")
     # VdP系统参数设置
     parser.add_argument("--mu", type=float, default=1.0, help="Van der Pol 阻尼参数 mu")
     parser.add_argument("--ts", type=float, default=0.1, help="仿真采样时间 (秒)")
     parser.add_argument("--seed", type=int, default=42, help="全局随机种子")
     # 绘图设置
-    parser.add_argument("--n_plots", type=int, default=1, help="指定需要绘制并保存图像的轨迹数量")
+    parser.add_argument("--n_plots", type=int, default=50, help="指定需要绘制并保存图像的轨迹数量")
     return parser.parse_args()
 
 def main():
@@ -53,8 +54,9 @@ def main():
         u_data = generate_excitation_signal(T_period=args.t_total, seed=args.seed + ep, amplitude=amp)
         
         # 包装动力学方程并仿真
-        t_vec, x_states = simulate_system(vdp_ode, u_data, y0=y0_random, Ts=args.ts)
-
+        t_vec, x_states_clean = simulate_system(vdp_ode, u_data, y0=y0_random, Ts=args.ts)
+        noise = np.random.normal(loc=0.0, scale=args.noise_std, size=x_states_clean.shape)
+        x_states = x_states_clean + noise
         # 逐点构建单步映射 (丢弃最后一步)
         X_ep, Y_ep = [], []
         for i in range(len(u_data) - 1):

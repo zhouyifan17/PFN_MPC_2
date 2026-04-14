@@ -31,8 +31,9 @@ def parse_args():
     parser.add_argument("--n_train_steps", type=int, default=2000, help="划分给训练集的步数")
     parser.add_argument("--ts", type=float, default=5.0, help="仿真采样时间 (秒)")
     parser.add_argument("--seed", type=int, default=42, help="全局随机种子")
+    parser.add_argument("--noise_std", type=float, default=0.02, help="观测量的噪声标准差")
     # 绘图配置
-    parser.add_argument("--n_plots", type=int, default=1, help="指定需要绘制并保存图像的轨迹数量")
+    parser.add_argument("--n_plots", type=int, default=50, help="指定需要绘制并保存图像的轨迹数量")
     
     return parser.parse_args()
 
@@ -74,7 +75,11 @@ def main():
         u_data = np.vstack((u1_data, u2_data)).T # Shape: (t_total, 2)
         
         # 仿真生成数据
-        t_vec, x_states = simulate_system(four_tank_ode, u_data, x0, args.ts)
+        t_vec, x_states_clean = simulate_system(four_tank_ode, u_data, x0, args.ts)
+        noise = np.random.normal(loc=0.0, scale=args.noise_std, size=x_states_clean.shape)
+        x_states = x_states_clean + noise
+        # 物理截断：水箱液位不可能为负数
+        x_states = np.maximum(x_states, 0.0)
         
         X_tr, Y_tr, X_va, Y_va = build_dataset(u_data, x_states, args.n_train_steps)
         

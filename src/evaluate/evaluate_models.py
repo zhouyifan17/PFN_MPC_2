@@ -22,7 +22,8 @@ def get_args():
                         choices=["single_step", "rolling"],
                         help="single_step: 教师强制单步预测; rolling: 自回归滚动预测")
     parser.add_argument("--n_plots", type=int, default=50, help="绘制预测轨迹对比图的数量")
-    
+    # warm-up 参数
+    parser.add_argument("--warmup_steps", type=int, default=50, help="冷启动预热步数，在此期间使用真实数据更新隐藏状态，并且不参与最后指标计算")
     # TabPFN 参数
     parser.add_argument("--context_mode", type=str, default="mixed", choices=["single", "mixed", "independent"], help="TabPFN 上下文策略")
     parser.add_argument("--seq_len", type=int, default=1, help="TabPFN 滑动窗口长度")
@@ -62,21 +63,21 @@ def create_sliding_windows_3d(X_train_3d, X_val_3d, Y_train_3d, Y_val_3d, seq_le
             np.array(X_val_seq_list), np.array(Y_val_seq_list))
     
     
-def rolling_predict_tabpfn(teacher, X_val_3d_scaled, seq_len, nx, nu, device):
+def rolling_predict_tabpfn(teacher, X_val_3d_scaled, seq_len, nx, nu, device, warmup_steps):
     """
     TabPFN 自回归滚动预测
     """
     N_episodes, num_val_steps, total_flat_dim = X_val_3d_scaled.shape
     feature_dim = nu + nx 
     
-    current_windows = X_val_3d_scaled[:, 0, :].copy() 
+    current_windows = X_val_3d_scaled[:, warmup_steps, :].copy()
     all_preds_scaled = []
     all_quants_scaled = []
     
     # 获取 95% 置信区间对应的分位数
     target_quantiles = [0.025, 0.975]
     
-    for t in tqdm(range(num_val_steps), desc="TabPFN Rolling Steps"):
+    for t in tqdm(range(warmup_steps, num_val_steps), desc="TabPFN Rolling Steps"):
         curr_tensor = torch.tensor(current_windows, dtype=torch.float32).to(device)
         with torch.no_grad():
             preds_scaled = teacher(curr_tensor).cpu().numpy()
@@ -99,7 +100,7 @@ def rolling_predict_tabpfn(teacher, X_val_3d_scaled, seq_len, nx, nu, device):
     return preds_out, quants_out
 
 # LSTM 和 DeepAR 的通用辅助函数
-def rolling_predict_nn(model, X_val, nx, nu, device, model_type):
+def rolling_predict_nn(model, X_val, nx, nu, device, model_type, warmup_steps):
     """
     自回归滚动预测
     """
@@ -112,14 +113,24 @@ def rolling_predict_nn(model, X_val, nx, nu, device, model_type):
     h = torch.zeros(num_layers, N_episodes, hidden_size).to(device)
     c = torch.zeros(num_layers, N_episodes, hidden_size).to(device)
     
+    # warm-up 阶段
+    with torch.no_grad():
+        for t in range(warmup_steps):
+            x_input = torch.tensor(X_val[:, t:t+1, :], dtype=torch.float32).to(device)
+            if model_type == "DeepAR":               
+                _, _, (h, c) = model(x_input, (h, c))
+            else:
+                _, (h, c) = model.lstm(x_input, (h, c))
+    
+    # Rolling 阶段
     preds_mu = []
     preds_sigma = []
     
     # 提取 t=0 时的初始输入
-    curr_x = torch.tensor(X_val[:, 0:1, :], dtype=torch.float32).to(device)
+    curr_x = torch.tensor(X_val[:, warmup_steps:warmup_steps+1, :], dtype=torch.float32).to(device)
     
     with torch.no_grad():
-        for t in tqdm(range(T_steps), desc=f"{model_type} Rolling Steps"):
+        for t in tqdm(range(warmup_steps, T_steps), desc=f"{model_type} Rolling Steps"):
             if model_type == "DeepAR":
                 mu, sigma, (h, c) = model(curr_x, (h, c))
                 preds_mu.append(mu.cpu().numpy())
@@ -141,7 +152,7 @@ def rolling_predict_nn(model, X_val, nx, nu, device, model_type):
         return np.concatenate(preds_mu, axis=1), None
 
 
-def single_step_predict_nn(model, X_val, device, model_type):
+def single_step_predict_nn(model, X_val, device, model_type, warmup_steps):
     """单步预测"""
     model.eval()
     X_t = torch.tensor(X_val, dtype=torch.float32).to(device)
@@ -149,11 +160,16 @@ def single_step_predict_nn(model, X_val, device, model_type):
     c = torch.zeros(model.lstm.num_layers, X_t.shape[0], model.lstm.hidden_size).to(device)
     
     with torch.no_grad():
+        X_warmup = X_t[:, :warmup_steps, :]
+        X_eval = X_t[:, warmup_steps:, :]
+        
         if model_type == "DeepAR":
-            mu, sigma, _ = model(X_t, (h, c))
+            _, _, (h, c) = model(X_warmup, (h, c))
+            mu, sigma, _ = model(X_eval, (h, c))
             return mu.cpu().numpy(), sigma.cpu().numpy()
         else:
-            out, _ = model.lstm(X_t, (h, c))
+            _, (h, c) = model.lstm(X_warmup, (h, c))
+            out, _ = model.lstm(X_eval, (h, c))
             preds = model.fc(out)
             return preds.cpu().numpy(), None
         
@@ -163,6 +179,7 @@ def main():
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
+    warmup_steps = args.warmup_steps
     dataset_name = args.dataset
     data_dir = f"data/processed/{dataset_name}"
     
@@ -188,6 +205,9 @@ def main():
     nx = Y_val_raw.shape[-1]
     nu = X_val_raw.shape[-1] - nx
 
+    if warmup_steps >= num_val_steps:
+        raise ValueError("warmup_steps 必须小于验证集的总时间步长！")
+    
     # 3. 统一全局标准化
     print("Loading global Scalers from local storage...")
     scaler_x_path = os.path.join(data_dir, "scaler_X.pkl")
@@ -231,12 +251,13 @@ def main():
             teacher.fit(pool_X[indices], pool_Y[indices])
             
             if args.pred_mode == "single_step":
-                X_val_tensor = torch.tensor(X_val_3d_sc.reshape(-1, X_val_3d_sc.shape[-1]), dtype=torch.float32).to(device)
+                X_val_eval = X_val_3d_sc[:, warmup_steps:, :]
+                X_val_tensor = torch.tensor(X_val_eval.reshape(-1, X_val_eval.shape[-1]), dtype=torch.float32).to(device)
                 with torch.no_grad(): 
                     Y_pred_all_scaled = teacher(X_val_tensor).cpu().numpy()
                     Y_quant_all_scaled = teacher.predict_quantiles(X_val_tensor, target_quantiles).cpu().numpy()
             else:
-                preds_3d, quants_3d = rolling_predict_tabpfn(teacher, X_val_3d_sc, args.seq_len, nx, nu, device)
+                preds_3d, quants_3d = rolling_predict_tabpfn(teacher, X_val_3d_sc, args.seq_len, nx, nu, device, warmup_steps)
                 Y_pred_all_scaled = preds_3d.reshape(-1, nx)
                 Y_quant_all_scaled = quants_3d.reshape(-1, nx, 2)
            
@@ -252,13 +273,14 @@ def main():
                 teacher.fit(pool_X[indices], pool_Y[indices])
                 
                 if args.pred_mode == "single_step":
-                    X_val_ep_tensor = torch.tensor(X_val_3d_sc[ep], dtype=torch.float32).to(device)
+                    X_val_ep_eval = X_val_3d_sc[ep, warmup_steps:, :]
+                    X_val_ep_tensor = torch.tensor(X_val_ep_eval, dtype=torch.float32).to(device)
                     with torch.no_grad():
                         preds_list.append(teacher(X_val_ep_tensor).cpu().numpy())
                         quants_list.append(teacher.predict_quantiles(X_val_ep_tensor, target_quantiles).cpu().numpy())
                 else:
                     X_val_ep_3d_scaled = X_val_3d_sc[ep:ep+1]
-                    pred_3d, quant_3d = rolling_predict_tabpfn(teacher, X_val_ep_3d_scaled, args.seq_len, nx, nu, device)
+                    pred_3d, quant_3d = rolling_predict_tabpfn(teacher, X_val_ep_3d_scaled, args.seq_len, nx, nu, device, warmup_steps)
                     preds_list.append(pred_3d[0])
                     quants_list.append(quant_3d[0])
             Y_pred_all_scaled = np.concatenate(preds_list, axis=0)
@@ -274,9 +296,9 @@ def main():
         model = torch.load(args.model_path, map_location=device, weights_only=False)
         
         if args.pred_mode == "single_step":
-            preds_3d, sigma_3d = single_step_predict_nn(model, X_val_scaled_raw, device, args.model_type)
+            preds_3d, sigma_3d = single_step_predict_nn(model, X_val_scaled_raw, device, args.model_type, warmup_steps)
         else:
-            preds_3d, sigma_3d = rolling_predict_nn(model, X_val_scaled_raw, nx, nu, device, args.model_type)
+            preds_3d, sigma_3d = rolling_predict_nn(model, X_val_scaled_raw, nx, nu, device, args.model_type, warmup_steps)
         # 反标准化
         Y_pred_all_unscaled = scaler_Y.inverse_transform(preds_3d.reshape(-1, nx))
         if sigma_3d is not None:
@@ -284,9 +306,10 @@ def main():
 
     # 5. 计算指标
     print("\nComputing Evaluation Metrics...")
-    Y_val_flat_unscaled = Y_val_raw.reshape(-1, nx)
+    Y_val_raw_eval = Y_val_raw[:, warmup_steps:, :]
+    Y_val_flat_unscaled = Y_val_raw_eval.reshape(-1, nx)
     mse = np.mean((Y_pred_all_unscaled - Y_val_flat_unscaled) ** 2)
-    print(f">>> Validation MSE (Mean Prediction): {mse:.6f} <<<")
+    print(f">>> Validation MSE: {mse:.6f} <<<")
     
     # 6. 保存实验日志
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -300,19 +323,20 @@ def main():
     max_plots = min(args.n_plots, N_episodes)
     print(f"Generating {max_plots} Trajectory Plots...")
     
+    num_eval_steps = num_val_steps - warmup_steps
     for ep in range(max_plots):
-        start_idx = ep * num_val_steps
-        end_idx = (ep + 1) * num_val_steps
+        start_idx = ep * num_eval_steps
+        end_idx = (ep + 1) * num_eval_steps
         
         Y_pred_plot = Y_pred_all_unscaled[start_idx:end_idx] # type: ignore
-        Y_true_plot = Y_val_raw[ep]
+        Y_true_plot = Y_val_raw_eval[ep]
         if Y_sigma_all_unscaled is not None:
             Y_sigma_plot = Y_sigma_all_unscaled[start_idx:end_idx]
         if Y_quant_all_unscaled is not None:
             Y_quant_plot = Y_quant_all_unscaled[start_idx:end_idx]
             
         plt.figure(figsize=(12, 3 * nx))
-        t_vec = np.arange(num_val_steps)
+        t_vec = np.arange(warmup_steps, num_val_steps)
         
         for i in range(nx):
             plt.subplot(nx, 1, i + 1)

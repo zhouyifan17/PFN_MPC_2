@@ -19,7 +19,7 @@ echo "Mode         : ${PRED_MODE}"
 echo "Context Mode : ${CONTEXT_MODE} (Trajs: ${N_CONTEXT_TRAJS})"
 echo "=================================================="
 
-python scripts/evaluate/evaluate_models.py \
+python src/evaluate/evaluate_models.py \
     --model_type ${MODEL} \
     --dataset ${DATASET} \
     --pred_mode ${PRED_MODE} \

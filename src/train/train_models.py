@@ -154,9 +154,9 @@ def main():
         
     # 实例化模型
     if args.model_type == "LSTM":
-        model = LSTMModel(input_size, n_hidden, output_size)
+        model = LSTMModel(input_size, n_hidden, output_size, num_layers=n_layers)
     elif args.model_type == "DeepAR":
-        model = DeepARModel(input_size, n_hidden, output_size)
+        model = DeepARModel(input_size, n_hidden, output_size, num_layers=n_layers)
     elif args.model_type == "FFN":
         raise NotImplementedError("FFN model is not yet implemented.")
     else:
@@ -174,6 +174,7 @@ def main():
         "Mode": args.mode,
         "N_Trajs": n_train,
         "Ctx_Trajs": args.n_context_trajs if args.data_source != "real" else "N/A",
+        "Layers": n_layers,
         "Hidden_Size": n_hidden,
         "Epochs": N_epoch
     }
@@ -191,7 +192,7 @@ def main():
     result_dict = {
         'layers': n_layers,
         'hidden': n_hidden,
-        'final_val_loss': val_loss[-1] if len(val_loss)>0 else None,
+        'final_val_mse': val_loss[-1] if len(val_loss)>0 else None,
         't_elapsed': t_elapsed
     }
 

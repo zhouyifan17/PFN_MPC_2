@@ -10,8 +10,10 @@ DATA_SOURCE="real"         # 数据来源
 echo "Starting Hyperparameter Grid Search for: ${LSTM}"
 echo "Dataset: ${DATASET} | Mode: ${MODE}"
 
-for LAYERS in 1 2 3; do
-    for HIDDEN in 10 20 40 80; do
+# for LAYERS in 1 2 3; do
+#     for HIDDEN in 10 20 40 80; do
+for LAYERS in 1; do
+    for HIDDEN in 80; do
         echo "--------------------------------------------------"
         echo "Currently Training -> Layers: ${LAYERS} | Hidden Size: ${HIDDEN}"
         echo "--------------------------------------------------"
@@ -23,7 +25,6 @@ for LAYERS in 1 2 3; do
             --data_source ${DATA_SOURCE} \
             --num_layers ${LAYERS} \
             --hidden_size ${HIDDEN}
-            
     done
 done
 
