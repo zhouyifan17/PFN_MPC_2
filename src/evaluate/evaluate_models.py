@@ -18,6 +18,7 @@ def get_args():
     parser.add_argument("--model_type", type=str, required=True, choices=["TabPFN", "LSTM", "DeepAR"], help="评估的模型类型")
     parser.add_argument("--gpu", type=str, default="0")
     parser.add_argument("--dataset", type=str, default="van_der_pol", help="数据集名称 (van_der_pol, four_tank)")
+    parser.add_argument("--eval_set", type=str, default="test", choices=["val", "test"], help="指定要评估的数据集")
     parser.add_argument("--pred_mode", type=str, default="rolling",
                         choices=["single_step", "rolling"],
                         help="single_step: 教师强制单步预测; rolling: 自回归滚动预测")
@@ -37,30 +38,30 @@ def get_args():
 
 
 # TabPFN 辅助函数
-def create_sliding_windows_3d(X_train_3d, X_val_3d, Y_train_3d, Y_val_3d, seq_len):
+def create_sliding_windows_3d(X_train_3d, X_eval_3d, Y_train_3d, Y_eval_3d, seq_len):
     """处理 3D 轨迹数据，切分为滑动窗口 (专供 TabPFN 使用)"""
     N_episodes = X_train_3d.shape[0]
-    num_val = X_val_3d.shape[1]
+    num_eval = X_eval_3d.shape[1]
 
     X_train_seq_list, Y_train_seq_list = [], []
-    X_val_seq_list, Y_val_seq_list = [], []
+    X_eval_seq_list, Y_eval_seq_list = [], []
 
     for ep in range(N_episodes):
-        X_total = np.concatenate((X_train_3d[ep], X_val_3d[ep]), axis=0)
-        Y_total = np.concatenate((Y_train_3d[ep], Y_val_3d[ep]), axis=0)
+        X_total = np.concatenate((X_train_3d[ep], X_eval_3d[ep]), axis=0)
+        Y_total = np.concatenate((Y_train_3d[ep], Y_eval_3d[ep]), axis=0)
         
         X_seq, Y_seq = [], []
         for i in range(len(X_total) - seq_len + 1):
             X_seq.append(X_total[i : i + seq_len].flatten())
             Y_seq.append(Y_total[i + seq_len - 1])
             
-        X_train_seq_list.append(np.array(X_seq)[:-num_val])
-        Y_train_seq_list.append(np.array(Y_seq)[:-num_val])
-        X_val_seq_list.append(np.array(X_seq)[-num_val:])
-        Y_val_seq_list.append(np.array(Y_seq)[-num_val:])
+        X_train_seq_list.append(np.array(X_seq)[:-num_eval])
+        Y_train_seq_list.append(np.array(Y_seq)[:-num_eval])
+        X_eval_seq_list.append(np.array(X_seq)[-num_eval:])
+        Y_eval_seq_list.append(np.array(Y_seq)[-num_eval:])
 
     return (np.array(X_train_seq_list), np.array(Y_train_seq_list), 
-            np.array(X_val_seq_list), np.array(Y_val_seq_list))
+            np.array(X_eval_seq_list), np.array(Y_eval_seq_list))
     
     
 def rolling_predict_tabpfn(teacher, X_val_3d_scaled, seq_len, nx, nu, device, warmup_steps):
@@ -191,22 +192,22 @@ def main():
         model_name = os.path.basename(os.path.dirname(args.model_path)) + "_" + os.path.basename(args.model_path).split('.')[0]
         exp_name = f"{args.model_type}_{model_name}_{args.pred_mode}"
         
-    results_dir = os.path.join(f"results/{dataset_name}/unified_eval", exp_name)
+    results_dir = os.path.join(f"results/{dataset_name}/unified_eval", args.eval_set, exp_name)
     os.makedirs(results_dir, exist_ok=True)
     
-    # 2. 加载原始数据
-    print(f"Loading data for {dataset_name}...")
+    # 2. 加载评估数据
+    print(f"Loading {args.eval_set} data for {dataset_name}...")
     X_train_raw = np.load(os.path.join(data_dir, "X_train.npy"))
     Y_train_raw = np.load(os.path.join(data_dir, "Y_train.npy"))
-    X_val_raw = np.load(os.path.join(data_dir, "X_val.npy"))
-    Y_val_raw = np.load(os.path.join(data_dir, "Y_val.npy"))
+    X_eval_raw = np.load(os.path.join(data_dir, f"X_{args.eval_set}.npy"))
+    Y_eval_raw = np.load(os.path.join(data_dir, f"Y_{args.eval_set}.npy"))
 
-    N_episodes, num_val_steps, _ = X_val_raw.shape
-    nx = Y_val_raw.shape[-1]
-    nu = X_val_raw.shape[-1] - nx
+    N_episodes, num_eval_steps_total, _ = X_eval_raw.shape
+    nx = Y_eval_raw.shape[-1]
+    nu = X_eval_raw.shape[-1] - nx
 
-    if warmup_steps >= num_val_steps:
-        raise ValueError("warmup_steps 必须小于验证集的总时间步长！")
+    if warmup_steps >= num_eval_steps_total:
+        raise ValueError("warmup_steps 必须小于评估集的总时间步长！")
     
     # 3. 统一全局标准化
     print("Loading global Scalers from local storage...")
@@ -219,7 +220,7 @@ def main():
     scaler_Y = joblib.load(scaler_y_path)
     
     X_train_scaled_raw = scaler_X.transform(X_train_raw.reshape(-1, X_train_raw.shape[-1])).reshape(X_train_raw.shape)
-    X_val_scaled_raw = scaler_X.transform(X_val_raw.reshape(-1, X_val_raw.shape[-1])).reshape(X_val_raw.shape)
+    X_eval_scaled_raw = scaler_X.transform(X_eval_raw.reshape(-1, X_eval_raw.shape[-1])).reshape(X_eval_raw.shape)
     Y_train_scaled_raw = scaler_Y.transform(Y_train_raw.reshape(-1, Y_train_raw.shape[-1])).reshape(Y_train_raw.shape)
 
     # 4. 预测推理
@@ -231,8 +232,8 @@ def main():
     
     if args.model_type == "TabPFN":
         print(f"Initializing TabPFN (Mode: {args.pred_mode} | Context: {args.context_mode})...")
-        X_train_3d_sc, Y_train_3d_sc, X_val_3d_sc, _ = create_sliding_windows_3d(
-            X_train_scaled_raw, X_val_scaled_raw, Y_train_scaled_raw, Y_val_raw, args.seq_len
+        X_train_3d_sc, Y_train_3d_sc, X_eval_3d_sc, _ = create_sliding_windows_3d(
+            X_train_scaled_raw, X_eval_scaled_raw, Y_train_scaled_raw, Y_eval_raw, args.seq_len
         )
         teacher = TabPFNWrapper(device=device, n_ensemble=3) # type: ignore
         target_quantiles = [0.025, 0.975]
@@ -251,13 +252,13 @@ def main():
             teacher.fit(pool_X[indices], pool_Y[indices])
             
             if args.pred_mode == "single_step":
-                X_val_eval = X_val_3d_sc[:, warmup_steps:, :]
-                X_val_tensor = torch.tensor(X_val_eval.reshape(-1, X_val_eval.shape[-1]), dtype=torch.float32).to(device)
+                X_eval_eval = X_eval_3d_sc[:, warmup_steps:, :]
+                X_eval_tensor = torch.tensor(X_eval_eval.reshape(-1, X_eval_eval.shape[-1]), dtype=torch.float32).to(device)
                 with torch.no_grad(): 
-                    Y_pred_all_scaled = teacher(X_val_tensor).cpu().numpy()
-                    Y_quant_all_scaled = teacher.predict_quantiles(X_val_tensor, target_quantiles).cpu().numpy()
+                    Y_pred_all_scaled = teacher(X_eval_tensor).cpu().numpy()
+                    Y_quant_all_scaled = teacher.predict_quantiles(X_eval_tensor, target_quantiles).cpu().numpy()
             else:
-                preds_3d, quants_3d = rolling_predict_tabpfn(teacher, X_val_3d_sc, args.seq_len, nx, nu, device, warmup_steps)
+                preds_3d, quants_3d = rolling_predict_tabpfn(teacher, X_eval_3d_sc, args.seq_len, nx, nu, device, warmup_steps)
                 Y_pred_all_scaled = preds_3d.reshape(-1, nx)
                 Y_quant_all_scaled = quants_3d.reshape(-1, nx, 2)
            
@@ -273,14 +274,14 @@ def main():
                 teacher.fit(pool_X[indices], pool_Y[indices])
                 
                 if args.pred_mode == "single_step":
-                    X_val_ep_eval = X_val_3d_sc[ep, warmup_steps:, :]
-                    X_val_ep_tensor = torch.tensor(X_val_ep_eval, dtype=torch.float32).to(device)
+                    X_eval_ep_eval = X_eval_3d_sc[ep, warmup_steps:, :]
+                    X_eval_ep_tensor = torch.tensor(X_eval_ep_eval, dtype=torch.float32).to(device)
                     with torch.no_grad():
-                        preds_list.append(teacher(X_val_ep_tensor).cpu().numpy())
-                        quants_list.append(teacher.predict_quantiles(X_val_ep_tensor, target_quantiles).cpu().numpy())
+                        preds_list.append(teacher(X_eval_ep_tensor).cpu().numpy())
+                        quants_list.append(teacher.predict_quantiles(X_eval_ep_tensor, target_quantiles).cpu().numpy())
                 else:
-                    X_val_ep_3d_scaled = X_val_3d_sc[ep:ep+1]
-                    pred_3d, quant_3d = rolling_predict_tabpfn(teacher, X_val_ep_3d_scaled, args.seq_len, nx, nu, device, warmup_steps)
+                    X_eval_ep_3d_scaled = X_eval_3d_sc[ep:ep+1]
+                    pred_3d, quant_3d = rolling_predict_tabpfn(teacher, X_eval_ep_3d_scaled, args.seq_len, nx, nu, device, warmup_steps)
                     preds_list.append(pred_3d[0])
                     quants_list.append(quant_3d[0])
             Y_pred_all_scaled = np.concatenate(preds_list, axis=0)
@@ -296,9 +297,9 @@ def main():
         model = torch.load(args.model_path, map_location=device, weights_only=False)
         
         if args.pred_mode == "single_step":
-            preds_3d, sigma_3d = single_step_predict_nn(model, X_val_scaled_raw, device, args.model_type, warmup_steps)
+            preds_3d, sigma_3d = single_step_predict_nn(model, X_eval_scaled_raw, device, args.model_type, warmup_steps)
         else:
-            preds_3d, sigma_3d = rolling_predict_nn(model, X_val_scaled_raw, nx, nu, device, args.model_type, warmup_steps)
+            preds_3d, sigma_3d = rolling_predict_nn(model, X_eval_scaled_raw, nx, nu, device, args.model_type, warmup_steps)
         # 反标准化
         Y_pred_all_unscaled = scaler_Y.inverse_transform(preds_3d.reshape(-1, nx))
         if sigma_3d is not None:
@@ -306,16 +307,38 @@ def main():
 
     # 5. 计算指标
     print("\nComputing Evaluation Metrics...")
-    Y_val_raw_eval = Y_val_raw[:, warmup_steps:, :]
-    Y_val_flat_unscaled = Y_val_raw_eval.reshape(-1, nx)
-    mse = np.mean((Y_pred_all_unscaled - Y_val_flat_unscaled) ** 2)
-    print(f">>> Validation MSE: {mse:.6f} <<<")
+    Y_eval_raw_eval = Y_eval_raw[:, warmup_steps:, :]
+    Y_eval_flat_unscaled = Y_eval_raw_eval.reshape(-1, nx)
+    mse = np.mean((Y_pred_all_unscaled - Y_eval_flat_unscaled) ** 2)
+    print(f">>> {args.eval_set} MSE: {mse:.6f} <<<")
     
+    # 概率预测评估指标
+    picp, mpiw = None, None
+    if Y_sigma_all_unscaled is not None or Y_quant_all_unscaled is not None:
+        if args.model_type == "DeepAR":
+            # DeepAR 的 95% 置信区间: mu ± 1.96 * sigma
+            lower_bound = Y_pred_all_unscaled - 1.96 * Y_sigma_all_unscaled # type: ignore
+            upper_bound = Y_pred_all_unscaled + 1.96 * Y_sigma_all_unscaled # type: ignore
+        elif args.model_type == "TabPFN":
+            # TabPFN 原生输出的分位数
+            lower_bound = Y_quant_all_unscaled[..., 0] # type: ignore
+            upper_bound = Y_quant_all_unscaled[..., 1] # type: ignore
+        # 1. 计算 PICP (覆盖率)
+        is_covered = (Y_eval_flat_unscaled >= lower_bound) & (Y_eval_flat_unscaled <= upper_bound)
+        picp = np.mean(is_covered) * 100.0
+        # 2. 计算 MPIW (区间宽度)
+        mpiw = np.mean(upper_bound - lower_bound) # type: ignore
+        
+        print(f">>> PICP (Coverage): {picp:.2f}% | MPIW (Width): {mpiw:.6f} <<<")
+            
     # 6. 保存实验日志
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     log_file_path = os.path.join(project_root, "forecast_results.txt")
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_msg = f"[{current_time}] Data: {dataset_name} | Eval: {exp_name} | MSE: {mse:.6f}\n"
+    log_msg = f"[{current_time}] Data: {dataset_name} | Set: {args.eval_set} | Eval: {exp_name} | MSE: {mse:.6f}"
+    if picp is not None and mpiw is not None:
+        log_msg += f" | PICP: {picp:.2f}% | MPIW: {mpiw:.6f}"
+    log_msg += "\n"
     with open(log_file_path, "a", encoding="utf-8") as f:
         f.write(log_msg)
     
@@ -323,20 +346,20 @@ def main():
     max_plots = min(args.n_plots, N_episodes)
     print(f"Generating {max_plots} Trajectory Plots...")
     
-    num_eval_steps = num_val_steps - warmup_steps
+    num_eval_steps = num_eval_steps_total - warmup_steps
     for ep in range(max_plots):
         start_idx = ep * num_eval_steps
         end_idx = (ep + 1) * num_eval_steps
         
         Y_pred_plot = Y_pred_all_unscaled[start_idx:end_idx] # type: ignore
-        Y_true_plot = Y_val_raw_eval[ep]
+        Y_true_plot = Y_eval_raw_eval[ep]
         if Y_sigma_all_unscaled is not None:
             Y_sigma_plot = Y_sigma_all_unscaled[start_idx:end_idx]
         if Y_quant_all_unscaled is not None:
             Y_quant_plot = Y_quant_all_unscaled[start_idx:end_idx]
             
         plt.figure(figsize=(12, 3 * nx))
-        t_vec = np.arange(warmup_steps, num_val_steps)
+        t_vec = np.arange(warmup_steps, num_eval_steps)
         
         for i in range(nx):
             plt.subplot(nx, 1, i + 1)
@@ -365,9 +388,9 @@ def main():
             
             if i == 0:
                 ctx_info = f" | Ctx: {args.n_context_trajs}" if args.model_type == "TabPFN" and args.context_mode == "mixed" else ""
-                plt.title(f'[{args.model_type}] Validation (Data: {dataset_name} | Mode: {args.pred_mode}{ctx_info} | Ep: {ep})')
+                plt.title(f'[{args.model_type}] {args.eval_set} (Data: {dataset_name} | Mode: {args.pred_mode}{ctx_info} | Ep: {ep})')
             if i == nx - 1:
-                plt.xlabel('Validation Samples (Time Steps)')
+                plt.xlabel(f'{args.eval_set.capitalize()} Samples (Time Steps)')
                 
             plt.legend(loc='upper right')
             plt.grid(True)

@@ -8,7 +8,7 @@ from sklearn.preprocessing import StandardScaler
 
 sys.path.append(os.path.abspath("."))
 from src.dynamics.four_tank import four_tank
-from src.utils.data_generator import generate_excitation_signal, simulate_system, plot_and_save_data, build_dataset
+from src.utils.data_generator import generate_excitation_signal, simulate_system, plot_and_save_data
 
 def generate_random_step_signal(total_steps, min_len=100, max_len=300, val_min=0.5, val_max=2.0):
     """
@@ -27,8 +27,9 @@ def parse_args():
 
     # 数据集配置
     parser.add_argument("--n_episodes", type=int, default=50, help="生成的总轨迹数量")
-    parser.add_argument("--t_total", type=int, default=2400, help="每条轨迹的总时间步数")
+    parser.add_argument("--t_total", type=int, default=2801, help="每条轨迹的总时间步数")
     parser.add_argument("--n_train_steps", type=int, default=2000, help="划分给训练集的步数")
+    parser.add_argument("--n_val_steps", type=int, default=400, help="划分给验证集的步数")
     parser.add_argument("--ts", type=float, default=5.0, help="仿真采样时间 (秒)")
     parser.add_argument("--seed", type=int, default=42, help="全局随机种子")
     parser.add_argument("--noise_std", type=float, default=0.02, help="观测量的噪声标准差")
@@ -54,6 +55,7 @@ def main():
     
     X_train_list, Y_train_list = [], []
     X_val_list, Y_val_list = [], []
+    X_test_list, Y_test_list = [], []
     
     for ep in tqdm(range(args.n_episodes), desc="Simulating Episodes"):
         np.random.seed(args.seed + ep)
@@ -81,12 +83,24 @@ def main():
         # 物理截断：水箱液位不可能为负数
         x_states = np.maximum(x_states, 0.0)
         
-        X_tr, Y_tr, X_va, Y_va = build_dataset(u_data, x_states, args.n_train_steps)
+        X_ep, Y_ep = [], []
+        for i in range(len(u_data) - 1):
+            X_ep.append(np.concatenate((u_data[i], x_states[i])))
+            Y_ep.append(x_states[i + 1])
+            
+        X_ep = np.array(X_ep)
+        Y_ep = np.array(Y_ep)
         
-        X_train_list.append(X_tr)
-        Y_train_list.append(Y_tr)
-        X_val_list.append(X_va)
-        Y_val_list.append(Y_va)
+        # 沿着时间轴切分数据集
+        n_train = args.n_train_steps
+        n_val = args.n_val_steps
+        
+        X_train_list.append(X_ep[:n_train])
+        Y_train_list.append(Y_ep[:n_train])
+        X_val_list.append(X_ep[n_train : n_train + n_val])
+        Y_val_list.append(Y_ep[n_train : n_train + n_val])
+        X_test_list.append(X_ep[n_train + n_val :])
+        Y_test_list.append(Y_ep[n_train + n_val :])
 
         if ep < args.n_plots:
             img_name = f"system_response_{ep}.png"
@@ -99,8 +113,9 @@ def main():
     # 堆叠成 3D 张量 [N_episodes, T_steps, Features]
     X_train, Y_train = np.array(X_train_list), np.array(Y_train_list)
     X_val, Y_val = np.array(X_val_list), np.array(Y_val_list)
-
-    # 保存Scaler
+    X_test, Y_test = np.array(X_test_list), np.array(Y_test_list)
+    
+    # 保存训练集 Scaler
     scaler_X = StandardScaler()
     scaler_Y = StandardScaler()
     scaler_X.fit(X_train.reshape(-1, X_train.shape[-1]))
@@ -116,10 +131,13 @@ def main():
     np.save(os.path.join(save_dir, "Y_train.npy"), Y_train)
     np.save(os.path.join(save_dir, "X_val.npy"), X_val)
     np.save(os.path.join(save_dir, "Y_val.npy"), Y_val)
-
+    np.save(os.path.join(save_dir, "X_test.npy"), X_test)
+    np.save(os.path.join(save_dir, "Y_test.npy"), Y_test)
+    
     print(f"\nData successfully generated and saved to {save_dir}")
     print(f"Train Shape: X={X_train.shape}, Y={Y_train.shape}")
     print(f"Val Shape  : X={X_val.shape}, Y={Y_val.shape}")
+    print(f"Test Shape : X={X_test.shape}, Y={Y_test.shape}")
     print(f"Plotted {min(args.n_plots, args.n_episodes)} sample trajectories in {plot_dir}")
 
 if __name__ == "__main__":

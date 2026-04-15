@@ -26,7 +26,7 @@ def parse_args():
     parser.add_argument("--n_context_trajs", type=int, default=1, help="生成人工数据时使用的 context 轨迹数")
     # 模型超参数
     parser.add_argument("--num_layers", type=int, default=1, help="LSTM/DeepAR的层数")
-    parser.add_argument("--hidden_size", type=int, default=20, help="隐藏层单元数")
+    parser.add_argument("--hidden_size", type=int, default=80, help="隐藏层单元数")
     
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
@@ -124,7 +124,12 @@ def main():
         
         t_pred_t = torch.tensor(t_pred, dtype=torch.float32).contiguous().to(device)
         t_quant_t = torch.tensor(t_quant, dtype=torch.float32).contiguous().to(device)
-
+    
+    trunc_steps = args.seq_len - 1
+    if trunc_steps > 0:
+        X_train = X_train[:, trunc_steps:, :]
+        Y_train = Y_train[:, trunc_steps:, :]
+        
     # 5. 转换为 PyTorch Tensor
     X_train_t = torch.tensor(X_train, dtype=torch.float32).contiguous().to(device)
     Y_train_t = torch.tensor(Y_train, dtype=torch.float32).contiguous().to(device)
@@ -165,7 +170,12 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10000, gamma=0.1)
 
-    model_filename = f"model_{model_type}_L{n_layers}_H{n_hidden}.pth"
+    # 文件后缀
+    if args.mode == "distill":
+        file_suffix = f"L{n_layers}_H{n_hidden}_W{args.distill_weight}"
+    else:
+        file_suffix = f"L{n_layers}_H{n_hidden}"
+    model_filename = f"model_{model_type}_{file_suffix}.pth"
     trainer = Trainer(model, device, ckpt_dir, model_name=model_filename)
 
     exp_info = {
@@ -176,7 +186,8 @@ def main():
         "Ctx_Trajs": args.n_context_trajs if args.data_source != "real" else "N/A",
         "Layers": n_layers,
         "Hidden_Size": n_hidden,
-        "Epochs": N_epoch
+        "Epochs": N_epoch,
+        "Distill_Weight": args.distill_weight if args.mode == "distill" else "N/A",
     }
         
     train_loss, val_loss, t_elapsed = trainer.train(
@@ -186,17 +197,18 @@ def main():
         t_pred=t_pred_t, t_quant=t_quant_t, distill_weight=args.distill_weight
     )
 
-    np.save(os.path.join(results_dir, f"train_loss_L{n_layers}_H{n_hidden}.npy"), train_loss)
-    np.save(os.path.join(results_dir, f"val_loss_L{n_layers}_H{n_hidden}.npy"), val_loss)
+    np.save(os.path.join(results_dir, f"train_loss_{file_suffix}.npy"), train_loss)
+    np.save(os.path.join(results_dir, f"val_loss_{file_suffix}.npy"), val_loss)
 
     result_dict = {
         'layers': n_layers,
         'hidden': n_hidden,
+        'distill_weight': args.distill_weight if args.mode == "distill" else None,
         'final_val_mse': val_loss[-1] if len(val_loss)>0 else None,
         't_elapsed': t_elapsed
     }
 
-    savemat(os.path.join(results_dir, f"result_L{n_layers}_H{n_hidden}.mat"), result_dict)
+    savemat(os.path.join(results_dir, f"result_{file_suffix}.mat"), result_dict)
     print(f"Finished: {model_filename}")
 
 if __name__ == "__main__":

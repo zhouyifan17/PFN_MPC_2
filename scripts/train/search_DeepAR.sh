@@ -3,7 +3,7 @@
 # 全局配置
 export CUDA_VISIBLE_DEVICES=2
 MODEL="DeepAR"
-DATASET="van_der_pol"      # 数据集名称 van_der_pol 或 four_tank
+DATASET="four_tank"      # 数据集名称 van_der_pol 或 four_tank
 MODE="standard"            # 选项: standard 或 distill
 DATA_SOURCE="real"         # 数据来源
 

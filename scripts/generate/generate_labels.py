@@ -13,11 +13,11 @@ from src.models import TabPFNWrapper
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="van_der_pol", help="数据集名称 (van_der_pol, four_tank, pendulum)")
-    parser.add_argument("--seq_len", type=int, default=1, help="sliding window length")
-    parser.add_argument("--context_size", type=int, default=2048, help="TabPFN最大上下文样本数")
+    parser.add_argument("--dataset", type=str, default="four_tank", help="数据集名称 (van_der_pol, four_tank, pendulum)")
+    parser.add_argument("--seq_len", type=int, default=20, help="sliding window length")
+    parser.add_argument("--context_size", type=int, default=8000, help="TabPFN最大上下文样本数")
     parser.add_argument("--n_splits", type=int, default=5, help="交叉预测的折数 (K-Fold)")
-    parser.add_argument("--batch_size", type=int, default=256, help="推理批次大小")
+    parser.add_argument("--batch_size", type=int, default=512, help="推理批次大小")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -74,7 +74,7 @@ def main():
     
     # 5. 初始化预测容器
     N_samples, out_dim = Y_seq.shape
-    quantiles = np.linspace(0.05, 0.95, 19).tolist()
+    quantiles = np.linspace(0.025, 0.975, 39).tolist()
     
     Y_teacher_point = np.zeros_like(Y_seq)
     Y_teacher_quantiles = np.zeros((N_samples, out_dim, len(quantiles)))

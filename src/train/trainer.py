@@ -38,15 +38,15 @@ class Trainer:
                 loss_task = torch.mean(torch.log(sigma) + 0.5 *((Y_train - mu) / sigma)**2)
             else:
                 Y_pred = outputs
-                loss_task = torch.mean((Y_pred - Y_train) ** 2) / torch.mean(Y_train ** 2)
+                loss_task = torch.mean((Y_pred - Y_train) ** 2) / torch.mean(Y_train ** 2 + 1e-8)
                 
-            # 知识蒸馏 loss 计算
+            # 蒸馏 loss 计算
             if t_pred is not None and t_quant is not None:
                 if is_deepar:
-                    loss_distill_mu = torch.nn.functional.mse_loss(mu, t_pred)
                     lower_bound = t_quant[:, :, :, 0]
                     upper_bound = t_quant[:, :, :, -1]
-                    t_sigma_target = torch.clamp((upper_bound - lower_bound) / 4.0, min=1e-4)
+                    t_sigma_target = torch.clamp((upper_bound - lower_bound) / 3.92, min=1e-4)
+                    loss_distill_mu = torch.mean((mu - Y_train) ** 2) / (torch.mean(Y_train ** 2) + 1e-8)
                     loss_distill_sigma = torch.nn.functional.mse_loss(sigma, t_sigma_target)
                     loss_distill = loss_distill_mu + loss_distill_sigma
                 else:
@@ -56,7 +56,7 @@ class Trainer:
                     upper_bound = t_quant[:, :, :, -1]
                     penalty_lower = torch.relu(lower_bound - Y_pred) ** 2
                     penalty_upper = torch.relu(Y_pred - upper_bound) ** 2
-                    loss_bounds = torch.mean(penalty_lower + penalty_upper)
+                    loss_bounds = torch.mean(penalty_lower + penalty_upper) 
                     loss_distill = loss_distill_point + 0.5 * loss_bounds
                 
                 # 加权总loss
@@ -72,7 +72,7 @@ class Trainer:
             self.model.eval()
             with torch.no_grad():
                 outputs_val = self.model(X_val)
-                eval_start = warmup_steps # warm-up阶段的去掉
+                eval_start = warmup_steps
                 if is_deepar:
                     mu_val, sigma_val, _ = outputs_val
                     mu_val_eval = mu_val[:, eval_start:, :]
@@ -84,7 +84,7 @@ class Trainer:
                 else:
                     outputs_eval = outputs_val[:, eval_start:, :]
                     Y_val_eval = Y_val[:, eval_start:, :]
-                    loss_val = torch.mean((outputs_eval - Y_val_eval) ** 2) / torch.mean(Y_val_eval ** 2)
+                    loss_val = torch.mean((outputs_eval - Y_val_eval) ** 2) / (torch.mean(Y_val_eval ** 2) + 1e-8)
                     val_mse = torch.mean((outputs_eval - Y_val_eval) ** 2).item()
                     
             # 记录数据
