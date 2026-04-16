@@ -359,7 +359,7 @@ def main():
             Y_quant_plot = Y_quant_all_unscaled[start_idx:end_idx]
             
         plt.figure(figsize=(12, 3 * nx))
-        t_vec = np.arange(warmup_steps, num_eval_steps)
+        t_vec = np.arange(warmup_steps, num_eval_steps_total)
         
         for i in range(nx):
             plt.subplot(nx, 1, i + 1)

@@ -38,7 +38,7 @@ class Trainer:
                 loss_task = torch.mean(torch.log(sigma) + 0.5 *((Y_train - mu) / sigma)**2)
             else:
                 Y_pred = outputs
-                loss_task = torch.mean((Y_pred - Y_train) ** 2) / torch.mean(Y_train ** 2 + 1e-8)
+                loss_task = torch.mean((Y_pred - Y_train) ** 2) / (torch.mean(Y_train ** 2) + 1e-8)
                 
             # 蒸馏 loss 计算
             if t_pred is not None and t_quant is not None:
@@ -48,7 +48,10 @@ class Trainer:
                     t_sigma_target = torch.clamp((upper_bound - lower_bound) / 3.92, min=1e-4)
                     loss_distill_mu = torch.mean((mu - Y_train) ** 2) / (torch.mean(Y_train ** 2) + 1e-8)
                     loss_distill_sigma = torch.nn.functional.mse_loss(sigma, t_sigma_target)
-                    loss_distill = loss_distill_mu + loss_distill_sigma
+                    # TODO: 动态调整两种loss的尺度
+                    distill_scale = 100.0
+                    loss_distill = (loss_distill_mu + loss_distill_sigma) * distill_scale
+
                 else:
                     # LSTM 的蒸馏 loss: 拟合点预测，并加上分位数越界惩罚
                     loss_distill_point = torch.nn.functional.mse_loss(Y_pred, t_pred) # type: ignore

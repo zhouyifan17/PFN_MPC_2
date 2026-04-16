@@ -203,8 +203,8 @@ def main():
     result_dict = {
         'layers': n_layers,
         'hidden': n_hidden,
-        'distill_weight': args.distill_weight if args.mode == "distill" else None,
-        'final_val_mse': val_loss[-1] if len(val_loss)>0 else None,
+        'distill_weight': args.distill_weight if args.mode == "distill" else np.nan,
+        'final_val_mse': val_loss[-1] if len(val_loss)>0 else np.nan,
         't_elapsed': t_elapsed
     }
 
