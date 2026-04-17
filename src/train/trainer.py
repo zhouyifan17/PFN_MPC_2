@@ -3,6 +3,16 @@ import time
 import torch
 import datetime
 
+# 辅助函数: 计算模型所有参数梯度范数的
+def compute_grad_norm(parameters):
+    total_norm = 0.0
+    for p in parameters:
+        if p.grad is not None:
+            param_norm = p.grad.detach().data.norm(2)
+            total_norm += param_norm.item() ** 2
+    return total_norm ** 0.5
+
+
 class Trainer:
     def __init__(self, model, device, save_dir, model_name="best_model.pth"):
         self.model = model.to(device)
@@ -13,12 +23,14 @@ class Trainer:
 
     def train(self, X_train, Y_train, X_val, Y_val, optimizer, scheduler, num_epochs, 
               log_interval=1000, experiment_info=None,
-              t_pred=None, t_quant=None, distill_weight=0.5, warmup_steps=50):
+              t_pred=None, t_quant=None, distill_weight=0.5, warmup_steps=50,
+              patience=5000):
         
         train_loss_hist = []
         val_loss_hist = []
         best_val_mse = float('inf')
         best_epoch = 0
+        patience_counter = 0
 
         t0 = time.time()
 
@@ -48,10 +60,7 @@ class Trainer:
                     t_sigma_target = torch.clamp((upper_bound - lower_bound) / 3.92, min=1e-4)
                     loss_distill_mu = torch.mean((mu - Y_train) ** 2) / (torch.mean(Y_train ** 2) + 1e-8)
                     loss_distill_sigma = torch.nn.functional.mse_loss(sigma, t_sigma_target)
-                    # TODO: 动态调整两种loss的尺度
-                    distill_scale = 100.0
-                    loss_distill = (loss_distill_mu + loss_distill_sigma) * distill_scale
-
+                    loss_distill_raw = loss_distill_mu + loss_distill_sigma
                 else:
                     # LSTM 的蒸馏 loss: 拟合点预测，并加上分位数越界惩罚
                     loss_distill_point = torch.nn.functional.mse_loss(Y_pred, t_pred) # type: ignore
@@ -60,16 +69,55 @@ class Trainer:
                     penalty_lower = torch.relu(lower_bound - Y_pred) ** 2
                     penalty_upper = torch.relu(Y_pred - upper_bound) ** 2
                     loss_bounds = torch.mean(penalty_lower + penalty_upper) 
-                    loss_distill = loss_distill_point + 0.5 * loss_bounds
+                    loss_distill_raw = loss_distill_point + 0.5 * loss_bounds
                 
-                # 加权总loss
+                # Compute Grad
+                optimizer.zero_grad()
+                loss_task.backward(retain_graph=True)
+                task_grads = [p.grad.clone().detach() if p.grad is not None else torch.zeros_like(p) for p in self.model.parameters()]
+                optimizer.zero_grad()
+                loss_distill_raw.backward()
+                distill_grads = [p.grad.clone().detach() if p.grad is not None else torch.zeros_like(p) for p in self.model.parameters()]
+                optimizer.zero_grad()
+                
+                with torch.no_grad():
+                    # Adaptive Gradient Scaling
+                    g_task_flat = torch.cat([g.flatten() for g in task_grads])
+                    g_distill_flat = torch.cat([g.flatten() for g in distill_grads])
+                    grad_norm_task = torch.norm(g_task_flat, p=2)
+                    grad_norm_distill = torch.norm(g_distill_flat, p=2)
+
+                    dynamic_scale = grad_norm_task / (grad_norm_distill + 1e-8)
+                    dynamic_scale = torch.clamp(dynamic_scale, min=0.01, max=1000.0)
+                    
+                    # PCGrad
+                    g_task_scaled_flat = (1.0 - distill_weight) * g_task_flat
+                    g_distill_scaled_flat = distill_weight * dynamic_scale * g_distill_flat
+                    dot_product = torch.dot(g_task_scaled_flat, g_distill_scaled_flat)
+                    if dot_product < 0:
+                        task_norm_sq = torch.dot(g_task_scaled_flat, g_task_scaled_flat) + 1e-8
+                        projection_scalar = dot_product / task_norm_sq
+                        
+                        for p, g_t, g_d in zip(self.model.parameters(), task_grads, distill_grads):
+                            g_t_scaled = (1.0 - distill_weight) * g_t
+                            g_d_scaled = distill_weight * dynamic_scale * g_d
+                            g_d_projected = g_d_scaled - projection_scalar * g_t_scaled
+                            p.grad = g_t_scaled + g_d_projected
+                    else:
+                        for p, g_t, g_d in zip(self.model.parameters(), task_grads, distill_grads):
+                            p.grad = (1.0 - distill_weight) * g_t + distill_weight * dynamic_scale * g_d
+                            
+                # 更新网络参数并记录
+                optimizer.step()
+                loss_distill = loss_distill_raw * dynamic_scale
                 loss_train = (1.0 - distill_weight) * loss_task + distill_weight * loss_distill
+                
             else:
                 loss_distill = torch.tensor(0.0)
                 loss_train = loss_task
-                
-            loss_train.backward()
-            optimizer.step()
+                optimizer.zero_grad()
+                loss_train.backward()
+                optimizer.step()
 
             # 验证阶段
             self.model.eval()
@@ -113,10 +161,18 @@ class Trainer:
                           f"Train Loss: {l_train:.6f} | Val Loss: {l_val:.6f} | Val MSE: {val_mse:.6f}")
             
             # 每100步检查并保存最佳模型
-            if epoch % 100 == 0 and val_mse <= best_val_mse:
-                best_val_mse = val_mse
-                best_epoch = epoch
-                torch.save(self.model, os.path.join(self.save_dir, self.model_name))
+            if epoch % 100 == 0:
+                if val_mse < best_val_mse:
+                    best_val_mse = val_mse
+                    best_epoch = epoch
+                    torch.save(self.model, os.path.join(self.save_dir, self.model_name))
+                    patience_counter = 0
+                else:
+                    patience_counter += 100
+                # 早停
+                if patience_counter >= patience:
+                    print(f"\n>>> Early Stopping Triggered! No improvement for {patience} epochs. Stopping at Epoch {epoch} <<<")
+                    break
 
         t_elapsed = time.time() - t0
         print(f"Training completed in {t_elapsed:.2f}s. Best Val MSE: {best_val_mse:.6f} at Epoch {best_epoch}")

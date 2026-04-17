@@ -19,7 +19,7 @@ def parse_args():
     parser.add_argument("--t_total", type=int, default=2801, help="每条轨迹的总时间步数")
     parser.add_argument("--n_train_steps", type=int, default=2000, help="划分给训练集的步数")
     parser.add_argument("--n_val_steps", type=int, default=400, help="划分给验证集的步数")
-    parser.add_argument("--noise_std", type=float, default=0.05, help="状态测量的观测噪声标准差")
+    parser.add_argument("--noise_std", type=float, default=0.08, help="状态测量的观测噪声标准差")
     # VdP系统参数设置
     parser.add_argument("--mu", type=float, default=1.0, help="Van der Pol 阻尼参数 mu")
     parser.add_argument("--ts", type=float, default=0.1, help="仿真采样时间 (秒)")

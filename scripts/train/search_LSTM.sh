@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # 全局配置
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=1
 MODEL="LSTM"
-DATASET="four_tank"      # 数据集名称 van_der_pol 或 four_tank
+DATASET="van_der_pol"      # 数据集名称 van_der_pol 或 four_tank
 MODE="standard"            # 选项: standard 或 distill
 DATA_SOURCE="real"         # 数据来源
 N_TRAIN=1                  # 训练使用的数据轨迹数 (1-50)

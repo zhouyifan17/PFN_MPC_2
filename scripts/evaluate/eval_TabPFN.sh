@@ -1,11 +1,11 @@
 #!/bin/bash
-export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=0
 
 # 参数设置
 MODEL="TabPFN"
-DATASET="four_tank"      # 选项: van_der_pol, four_tank
+DATASET="van_der_pol"      # 选项: van_der_pol, four_tank
 PRED_MODE="single_step"        # 选项: single_step, rolling
-N_PLOTS=0                 # 绘图数量 (0~50)
+N_PLOTS=50                 # 绘图数量 (0~50)
 CONTEXT_MODE="mixed"       # 选项: independent, mixed
 SEQ_LEN=20                  # 滑动窗口长度
 CONTEXT_SIZE=8000          # Context 样本池最大数量

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 全局配置
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=1
 MODEL="DeepAR"             # 选项: DeepAR 或 LSTM
 DATASET="van_der_pol"        # 数据集名称 van_der_pol 或 four_tank
 MODE="distill"             # 选项: standard 或 distill
@@ -17,7 +17,7 @@ echo "Starting Training for: ${MODEL}"
 echo "Dataset: ${DATASET} | Mode: ${MODE}"
 
 # 使用 seq 生成步长为 0.1 的序列
-for DISTILL_WEIGHT in $(seq 0.6 0.1 1.0); do
+for DISTILL_WEIGHT in $(seq 0.1 0.1 1.0); do
     echo "----------------------------------------------------------------------"
     echo "Running -> Layers: ${LAYERS} | Hidden: ${HIDDEN} | Weight: ${DISTILL_WEIGHT}"
     echo "----------------------------------------------------------------------"

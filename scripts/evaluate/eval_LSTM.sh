@@ -3,7 +3,7 @@ export CUDA_VISIBLE_DEVICES=3
 
 # 参数设置区域
 MODEL="LSTM"
-DATASET="four_tank"      # 选项: van_der_pol, four_tank
+DATASET="van_der_pol"      # 选项: van_der_pol, four_tank
 EVAL_SET="test"            # 要评估的数据集 (验证集还是测试集 val or test)
 PRED_MODE="single_step"        # 选项: single_step, rolling
 N_PLOTS=50                 # 绘图数 (0~50)
