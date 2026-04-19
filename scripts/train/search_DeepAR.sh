@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # 全局配置
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=1
 MODEL="DeepAR"
 DATASET="van_der_pol"      # 数据集名称 van_der_pol 或 four_tank
 MODE="standard"            # 选项: standard 或 distill
 DATA_SOURCE="real"         # 数据来源
-N_TRAIN=1                  # 训练使用的数据轨迹数 (1-50)
+N_TRAIN=50                  # 训练使用的数据轨迹数 (1-50)
 
 echo "Starting Hyperparameter Grid Search for: ${LSTM}"
 echo "Dataset: ${DATASET} | Mode: ${MODE}"
@@ -14,7 +14,7 @@ echo "Dataset: ${DATASET} | Mode: ${MODE}"
 # for LAYERS in 1 2 3; do
 #     for HIDDEN in 10 20 40 80; do
 for LAYERS in 1; do
-    for HIDDEN in 80; do
+    for HIDDEN in 20; do
         echo "--------------------------------------------------"
         echo "Currently Training -> Layers: ${LAYERS} | Hidden Size: ${HIDDEN}"
         echo "--------------------------------------------------"

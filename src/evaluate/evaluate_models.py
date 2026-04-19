@@ -189,7 +189,8 @@ def main():
         exp_name = f"TabPFN_{args.context_mode}_{ctx_str}_{args.pred_mode}_seq{args.seq_len}"
     else:
         if not args.model_path: raise ValueError(f"评估 {args.model_type} 时必须提供 --model_path")
-        model_name = os.path.basename(os.path.dirname(args.model_path)) + "_" + os.path.basename(args.model_path).split('.')[0]
+        file_name = os.path.splitext(os.path.basename(args.model_path))[0]
+        model_name = os.path.basename(os.path.dirname(args.model_path)) + "_" + file_name
         exp_name = f"{args.model_type}_{model_name}_{args.pred_mode}"
         
     results_dir = os.path.join(f"results/{dataset_name}/unified_eval", args.eval_set, exp_name)

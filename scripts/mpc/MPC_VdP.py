@@ -34,10 +34,15 @@ def parse_args():
     # MPC 控制参数
     parser.add_argument("--horizon", type=int, default=10, help="MPC预测时域 N")
     parser.add_argument("--noise_std", type=float, default=0.08, help="MPC观测噪声标准差(同训练集)")
+    # 其他参数
+    parser.add_argument("--seed", type=int, default=42, help="随机数种子")
+    parser.add_argument("--burn_in_steps", type=int, default=10, help="LSTM隐状态预热步数")
     return parser.parse_args()
 
 def main():
     args = parse_args()
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     
     # 加载标准化 Scaler
     scaler_X_path = "data/processed/van_der_pol/scaler_X.pkl"
@@ -115,6 +120,28 @@ def main():
     x_current_noisy = x_current_clean.copy()
     u_mpc = 0.0 
 
+    # LSTM 隐状态预热
+    if args.burn_in_steps > 0:
+        print(f"Warming up {args.model_type} hidden states for {args.burn_in_steps} steps (Burn-in)...")
+        for _ in range(args.burn_in_steps):
+            x_curr_norm = (x_current_noisy - x_mean) / x_scale
+            u_mpc_norm = (u_mpc - u_mean) / u_scale
+            
+            with torch.no_grad():
+                x_input = torch.tensor(np.concatenate(([u_mpc_norm], x_curr_norm)), dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                h_tensor = torch.tensor(h_current, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                c_tensor = torch.tensor(c_current, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                
+                _, (h_next_tensor, c_next_tensor) = model.lstm(x_input, (h_tensor, c_tensor))
+                h_current = h_next_tensor.squeeze().numpy()
+                c_current = c_next_tensor.squeeze().numpy()
+            
+            ode_sol = solve_ivp(lambda t, y: van_der_pol(t, y, mu, u_mpc), [0, Ts], x_current_clean, method='RK45')
+            x_current_clean = ode_sol.y[:, -1]
+            noise = np.random.normal(loc=0.0, scale=args.noise_std, size=x_current_clean.shape)
+            x_current_noisy = x_current_clean + noise
+    
+    print("Starting closed-loop MPC simulation...")
     total_steps = len(ref_seq) - N
     for i in range(total_steps):
         if i % 20 == 0: print(f"Simulation step: {i} / {total_steps}")
@@ -143,6 +170,26 @@ def main():
         try:
             sol = mpc.solve()
             solve_times.append(time.perf_counter() - start_time) 
+            
+            # ==========================================================
+            # 🔍 【新增】冷启动诊断监测模块 (仅打印前 5 步)
+            # ==========================================================
+            if i < 5:
+                print(f"\n[DIAGNOSTIC] --- Step {i} ---")
+                # 提取求解器预测的归一化轨迹，并反归一化为物理值
+                pred_x_norm = sol.value(mpc.x)
+                pred_u_norm = sol.value(mpc.u)
+                pred_h = sol.value(mpc.h[:, 1]) # 下一步的隐状态
+                
+                pred_x_phys = pred_x_norm * x_scale[:, None] + x_mean[:, None]
+                pred_u_phys = pred_u_norm * u_scale + u_mean
+                
+                print(f"1. 当前真实状态 x_1: {x_current_noisy[0]:.4f}")
+                print(f"2. 求解器预测的未来 3 步 x_1 轨迹: {np.round(pred_x_phys[0, 1:4], 4)}")
+                print(f"3. 求解器计划的未来 3 步控制量 u: {np.round(pred_u_phys[:3], 4)}")
+                print(f"4. LSTM 隐状态 h (前5个元素): {np.round(pred_h[:5], 4)}")
+                print("-" * 40)
+            # ==========================================================
             
             u_mpc_norm_new = sol.value(mpc.u[0])
             u_mpc = float(u_mpc_norm_new * u_scale + u_mean)

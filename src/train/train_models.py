@@ -26,7 +26,7 @@ def parse_args():
     parser.add_argument("--n_context_trajs", type=int, default=1, help="生成人工数据时使用的 context 轨迹数")
     # 模型超参数
     parser.add_argument("--num_layers", type=int, default=1, help="LSTM/DeepAR的层数")
-    parser.add_argument("--hidden_size", type=int, default=80, help="隐藏层单元数")
+    parser.add_argument("--hidden_size", type=int, default=20, help="隐藏层单元数")
     
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()

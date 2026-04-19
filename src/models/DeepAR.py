@@ -9,13 +9,13 @@ class DeepARModel(nn.Module):
         # 均值解码器
         self.mu_decoder = nn.Sequential(
             nn.Linear(hidden_size, branch_hidden),
-            nn.ReLU(),
+            nn.Softplus(),
             nn.Linear(branch_hidden, output_size)
         )
         # 标准差解码器
         self.sigma_decoder = nn.Sequential(
             nn.Linear(hidden_size, branch_hidden),
-            nn.ReLU(),
+            nn.Softplus(),
             nn.Linear(branch_hidden, output_size)
         )
         self.softplus = nn.Softplus()

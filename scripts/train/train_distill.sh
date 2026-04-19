@@ -1,17 +1,17 @@
 #!/bin/bash
 
 # 全局配置
-export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=3
 MODEL="DeepAR"             # 选项: DeepAR 或 LSTM
-DATASET="van_der_pol"        # 数据集名称 van_der_pol 或 four_tank
+DATASET="four_tank"        # 数据集名称 van_der_pol 或 four_tank
 MODE="distill"             # 选项: standard 或 distill
 DATA_SOURCE="real"         # 数据来源
-SEQ_LEN=15               # 蒸馏标签生成时，TabPFN使用的context长度 (VdP取15, fourTank取20)
-N_TRAIN=1                  # 训练使用的数据轨迹数 (1-50)
+SEQ_LEN=20               # 蒸馏标签生成时，TabPFN使用的context长度 (VdP取15, fourTank取20)
+N_TRAIN=50                  # 训练使用的数据轨迹数 (1-50)
 # DISTILL_WEIGHT=0.5         # 蒸馏权重系数
 
 LAYERS=1
-HIDDEN=80
+HIDDEN=20
 
 echo "Starting Training for: ${MODEL}"
 echo "Dataset: ${DATASET} | Mode: ${MODE}"

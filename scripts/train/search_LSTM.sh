@@ -14,7 +14,7 @@ echo "Dataset: ${DATASET} | Mode: ${MODE}"
 # for LAYERS in 1 2 3; do
 #     for HIDDEN in 10 20 40 80; do
 for LAYERS in 1; do
-    for HIDDEN in 80; do
+    for HIDDEN in 20; do
         echo "--------------------------------------------------"
         echo "Currently Training -> Layers: ${LAYERS} | Hidden Size: ${HIDDEN}"
         echo "--------------------------------------------------"

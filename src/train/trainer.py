@@ -58,18 +58,18 @@ class Trainer:
                     lower_bound = t_quant[:, :, :, 0]
                     upper_bound = t_quant[:, :, :, -1]
                     t_sigma_target = torch.clamp((upper_bound - lower_bound) / 3.92, min=1e-4)
-                    loss_distill_mu = torch.mean((mu - Y_train) ** 2) / (torch.mean(Y_train ** 2) + 1e-8)
+                    loss_distill_mu = torch.mean((mu - t_pred) ** 2) / (torch.mean(t_pred ** 2) + 1e-8)
                     loss_distill_sigma = torch.nn.functional.mse_loss(sigma, t_sigma_target)
                     loss_distill_raw = loss_distill_mu + loss_distill_sigma
                 else:
                     # LSTM 的蒸馏 loss: 拟合点预测，并加上分位数越界惩罚
-                    loss_distill_point = torch.nn.functional.mse_loss(Y_pred, t_pred) # type: ignore
+                    loss_distill_point = torch.mean((Y_pred - t_pred) ** 2) / (torch.mean(t_pred ** 2) + 1e-8)
                     lower_bound = t_quant[:, :, :, 0]
                     upper_bound = t_quant[:, :, :, -1]
                     penalty_lower = torch.relu(lower_bound - Y_pred) ** 2
                     penalty_upper = torch.relu(Y_pred - upper_bound) ** 2
                     loss_bounds = torch.mean(penalty_lower + penalty_upper) 
-                    loss_distill_raw = loss_distill_point + 0.5 * loss_bounds
+                    loss_distill_raw = loss_distill_point + loss_bounds
                 
                 # Compute Grad
                 optimizer.zero_grad()

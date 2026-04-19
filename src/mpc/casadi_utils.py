@@ -71,14 +71,30 @@ def deepar_cell_ca(x_t, h_prev, c_prev, W_ih, W_hh, b,
     c_t = f * c_prev + i * g
     h_t = o * ca.tanh(c_t)
     
-    # Mu Decoder (Linear -> ReLU -> Linear)
-    mu_hidden = ca.fmax(0, ca.mtimes(W_mu1, h_t) + b_mu1)
+    # # 我们原来的逻辑
+    # # Mu Decoder (Linear -> ReLU -> Linear)
+    # mu_hidden = ca.fmax(0, ca.mtimes(W_mu1, h_t) + b_mu1)
+    # mu_t = ca.mtimes(W_mu2, mu_hidden) + b_mu2
+    
+    # # Sigma Decoder (Linear -> ReLU -> Linear -> Softplus)
+    # sig_hidden = ca.fmax(0, ca.mtimes(W_sig1, h_t) + b_sig1) # ReLU
+    # sig_raw = ca.mtimes(W_sig2, sig_hidden) + b_sig2
+    # sigma_t = ca.log(1 + ca.exp(sig_raw)) + 1e-3
+    
+    # -------------------------------------------------------------
+    # 将所有的 ca.fmax(0, x) 替换为 ca.log(1 + ca.exp(x))
+    # -------------------------------------------------------------
+    # Mu Decoder (Linear -> Softplus -> Linear)
+    mu_raw = ca.mtimes(W_mu1, h_t) + b_mu1
+    mu_hidden = ca.log(1 + ca.exp(mu_raw))  # <--- 平滑替代 ReLU
     mu_t = ca.mtimes(W_mu2, mu_hidden) + b_mu2
     
-    # Sigma Decoder (Linear -> ReLU -> Linear -> Softplus)
-    sig_hidden = ca.fmax(0, ca.mtimes(W_sig1, h_t) + b_sig1) # ReLU
-    sig_raw = ca.mtimes(W_sig2, sig_hidden) + b_sig2
-    sigma_t = ca.log(1 + ca.exp(sig_raw)) + 1e-3
+    # Sigma Decoder (Linear -> Softplus -> Linear -> Softplus)
+    sig_raw1 = ca.mtimes(W_sig1, h_t) + b_sig1
+    sig_hidden = ca.log(1 + ca.exp(sig_raw1)) # <--- 平滑替代 ReLU
+    
+    sig_raw2 = ca.mtimes(W_sig2, sig_hidden) + b_sig2
+    sigma_t = ca.log(1 + ca.exp(sig_raw2)) + 1e-3
     
     return mu_t, sigma_t, h_t, c_t
 
