@@ -1,27 +1,32 @@
 import numpy as np
 
-def calculate_tracking_metrics(y, target):
+def calculate_tracking_metrics(y, target, preview_steps=10):
     """
     通用单维状态轨迹跟踪指标计算
-    返回: MAE, MSE, RMSE, Overshoot (%)
+    返回: MAE, MSE, RMSE
     """
     mae = np.mean(np.abs(y - target))
     mse = np.mean((y - target)**2)
     rmse = np.sqrt(mse)
     
-    start_val = y[0]
+    if len(y) > preview_steps:
+        y_eval = y[:-preview_steps]
+    else:
+        y_eval = y
+        
     y_inf = target[-1]
     overshoot = 0.0
     
-    # 动态超调量计算逻辑
-    if y_inf > start_val + 1e-4:  # 目标上升
-        y_max = np.max(y)
+    denom = np.abs(y_inf) + 1e-8 
+    
+    if y_inf >= y[0]:  # 上升或持平
+        y_max = np.max(y_eval)
         if y_max > y_inf:
-            overshoot = (y_max - y_inf) / np.abs(y_inf) * 100.0
-    elif y_inf < start_val - 1e-4:  # 目标下降
-        y_min = np.min(y)
+            overshoot = (y_max - y_inf) / denom * 100.0
+    else:  # 下降
+        y_min = np.min(y_eval)
         if y_min < y_inf:
-            overshoot = (y_inf - y_min) / np.abs(y_inf) * 100.0
+            overshoot = (y_inf - y_min) / denom * 100.0
             
     return mae, mse, rmse, overshoot
 

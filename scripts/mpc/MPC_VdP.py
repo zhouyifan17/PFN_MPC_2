@@ -19,17 +19,17 @@ from src.mpc.mpc_solver import LSTM_MPCSolver, DeepAR_SMPC_Solver
 from src.utils.metrics import calculate_tracking_metrics, calculate_control_smoothness, detect_reference_phases
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Evaluate LSTM-MPC on Van der Pol")
+    parser = argparse.ArgumentParser(description="Evaluate MPC on Van der Pol")
     # 模型类型与控制类型
     parser.add_argument("--model_type", type=str, default="LSTM", choices=["LSTM", "DeepAR"])
     parser.add_argument("--mpc_type", type=str, default="MPC", choices=["MPC", "SMPC"], help="标准MPC和SMPC")
     # 数据集设置
     parser.add_argument("--data_source", type=str, default="real", choices=["real", "surrogate"])
-    parser.add_argument("--mode", type=str, default="standard", choices=["standard", "distill"])
+    parser.add_argument("--train_mode", type=str, default="standard", choices=["standard", "distill"])
     parser.add_argument("--n_train", type=int, default=1, help="训练时使用的轨迹数量")
     # 模型结构与训练参数
     parser.add_argument("--num_layers", type=int, default=1, help="隐藏层数")
-    parser.add_argument("--hidden_size", type=int, default=80, help="隐藏层单元数")
+    parser.add_argument("--hidden_size", type=int, default=20, help="隐藏层单元数")
     parser.add_argument("--distill_weight", type=float, default=0.5, help="蒸馏权重 (仅distill模式有效)")
     # MPC 控制参数
     parser.add_argument("--horizon", type=int, default=10, help="MPC预测时域 N")
@@ -57,8 +57,8 @@ def main():
     x_scale = scaler_Y.scale_
     
     # 路径构建
-    save_prefix = f"{args.data_source}_{args.mode}_N{args.n_train}"
-    if args.mode == "distill":
+    save_prefix = f"{args.data_source}_{args.train_mode}_N{args.n_train}"
+    if args.train_mode == "distill":
         file_suffix = f"L{args.num_layers}_H{args.hidden_size}_W{args.distill_weight}"
     else:
         file_suffix = f"L{args.num_layers}_H{args.hidden_size}"
@@ -67,7 +67,7 @@ def main():
     model_filename = f"model_{args.model_type}_{file_suffix}.pth"
     ckpt_path = os.path.join(ckpt_dir, model_filename)
     
-    if args.mode == "distill":
+    if args.train_mode == "distill":
         exp_prefix = f"{args.model_type}_{args.mpc_type}_VdP_{save_prefix}_L{args.num_layers}_H{args.hidden_size}_W{args.distill_weight}_T{args.horizon}"
     else:
         exp_prefix = f"{args.model_type}_{args.mpc_type}_VdP_{save_prefix}_L{args.num_layers}_H{args.hidden_size}_T{args.horizon}"
@@ -172,11 +172,10 @@ def main():
             solve_times.append(time.perf_counter() - start_time) 
             
             # ==========================================================
-            # 🔍 【新增】冷启动诊断监测模块 (仅打印前 5 步)
+            # 冷启动诊断监测模块
             # ==========================================================
             if i < 5:
                 print(f"\n[DIAGNOSTIC] --- Step {i} ---")
-                # 提取求解器预测的归一化轨迹，并反归一化为物理值
                 pred_x_norm = sol.value(mpc.x)
                 pred_u_norm = sol.value(mpc.u)
                 pred_h = sol.value(mpc.h[:, 1]) # 下一步的隐状态
@@ -242,7 +241,7 @@ def main():
         for start, end, name in phases:
             curr_x1, curr_ref = x_vals_clean[start:end, 0], xref_actual[start:end, 0]
             
-            _, _, rmse, os_val = calculate_tracking_metrics(curr_x1, curr_ref)
+            _, _, rmse, os_val = calculate_tracking_metrics(curr_x1, curr_ref, preview_steps=args.horizon)
             overall_rmse.append(rmse)
             overall_os.append(os_val)
                 

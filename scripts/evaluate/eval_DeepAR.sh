@@ -2,15 +2,15 @@
 export CUDA_VISIBLE_DEVICES=0
 
 # 参数设置
-MODEL="LSTM"           # 选项: LSTM, DeepAR
-DATASET="van_der_pol"      # 选项: van_der_pol, four_tank
+MODEL="DeepAR"           # 选项: LSTM, DeepAR
+DATASET="four_tank"      # 选项: van_der_pol, four_tank
 PRED_MODE="rolling"        # 选项: single_step, rolling
-TRAIN_MODE="distill"       # 选项: standard, distill
+TRAIN_MODE="standard"       # 选项: standard, distill
 EVAL_SET="test"            # 要评估的数据集 (验证集还是测试集 val or test)
 N_PLOTS=50                 # 绘图数 (0~50)
 N_TRAIN=1                  # 训练轨迹数 (1~50)
 N_HIDDEN=20               # 隐藏单元数
-DISTILL_WEIGHT=0.9
+DISTILL_WEIGHT=1.0        # 蒸馏loss权重
 # 执行区
 echo "=================================================="
 echo "Starting Evaluation for: ${MODEL}"
@@ -18,7 +18,7 @@ echo "Dataset  : ${DATASET}"
 echo "Mode     : ${PRED_MODE}"
 echo "=================================================="
 
-MODEL_PATH="checkpoints/${MODEL}/${DATASET}/real_${TRAIN_MODE}_N${N_TRAIN}/model_${MODEL}_L1_H${N_HIDDEN}_W${DISTILL_WEIGHT}.pth"
+MODEL_PATH="checkpoints/${MODEL}/${DATASET}/real_${TRAIN_MODE}_N${N_TRAIN}/model_${MODEL}_L1_H${N_HIDDEN}.pth"
 
 python src/evaluate/evaluate_models.py \
     --model_type ${MODEL} \
